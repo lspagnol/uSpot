@@ -1,0 +1,18 @@
+############### Regles uSpot ##################################################
+
+# Le demon HTTPD consulte et active les acces
+www-data	ALL=NOPASSWD:	/usr/local/uSpot/uSpot-grant
+www-data        ALL=NOPASSWD:	/usr/local/uSpot/uSpot-revoke
+www-data	ALL=NOPASSWD:	/usr/local/uSpot/auth-guest-su.sh
+
+# Le demon DHCPD desactive les acces
+dhcpd		ALL=NOPASSWD:	/usr/local/uSpot/uSpot-revoke
+
+# Stats MUNIN
+nobody		ALL=NOPASSWD:	/usr/local/uSpot/uSpot leases
+nobody		ALL=NOPASSWD:	/usr/local/uSpot/uSpot sessions -k
+nobody		ALL=NOPASSWD:	/usr/sbin/logtail -f /var/log/dhcpd/dhcpd.log
+nobody		ALL=NOPASSWD:	/usr/sbin/logtail -f /var/log/uSpot/uSpot.log
+nobody		ALL=NOPASSWD:	/usr/bin/tsp -nf /sbin/iptables -nvxL counters
+
+###############################################################################

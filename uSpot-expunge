@@ -1,0 +1,45 @@
+#!/bin/bash
+# uSpot-revoke
+# Suppression des sessions ouvertes depuis ... 'MAX_DURATION'
+
+########################################################################
+
+. /usr/local/uSpot/uSpot-functions
+
+########################################################################
+# Aide
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage: uSpot-expunge [<duration> (seconds)]
+EOF
+return 0
+fi
+
+########################################################################
+
+max_duration=${1:-${MAX_DURATION}}
+max_duration=${max_duration:-0}
+
+# Initialiser si la revocation est utilisee avant la mise en place des regles
+[ -d ${SESSIONS} ] || begin
+
+# Recuperer les sessions actives dans le noyau
+sessions -k |while read session ; do
+	mac=${session% *}
+	ip=${session#* }
+	session_file="${SESSIONS}/${mac} ${ip}"
+	if [ -f "${session_file}" ] ; then # Procedure de revoquation normale
+		access_data=$( < "${session_file}" )
+		session_duration=$(( ${EPOCH} - ${access_data##*,} ))
+		if [ ${session_duration} -gt ${max_duration} ] ; then
+			${USPOT}/uSpot-revoke ${mac} ${ip}
+		fi
+	else # Pas de donnes en cache => forcer la suppression
+#		IPT -D authenticated -t mangle -m mac --mac-source ${mac} -s ${ip} -j ACCEPT 2>/dev/null >/dev/null
+		IPT -D authenticated -t mangle -m mac --mac-source ${mac} -j ACCEPT 2>/dev/null >/dev/null
+		log "ACCESS REVOKED: ${session/ /,}"
+	fi
+done
+
+exit 0

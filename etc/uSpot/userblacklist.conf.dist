@@ -1,0 +1,8 @@
+# Liste noire identifiants utilisateurs (globlale)
+# Ils seront bloques par 'uSpot-grant' apres l'authentification si le
+# module 'check_user.sh' est actif.
+# La liste peut etre surchargee localement via:
+# '/etc/uSpot/userblacklist_HOSTNAME.conf'
+
+# demo001
+# toto01

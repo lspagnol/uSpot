@@ -1,0 +1,30 @@
+<html>
+<body>
+Bonjour,<br>
+<br>
+Un nouveau mot de passe a &eacute;t&eacute; cr&eacute;&eacute; pour vous donnez acc&egrave;s au r&eacute;seau Wifi <i>Eduspot</i> de l'URCA.<br>
+<br>
+<table>
+<tr><td><li>Identifiant:</li></td><td><b>##LOGIN##</b></td></tr>
+<tr><td><li>Mot de passe:</li></td><td><b>##PASSWD##</b></td></tr>
+</table>
+<br>
+L'utilisation du r&eacute;seau Wifi de l'universit&eacute; est soumis &agrave;
+une charte de bon usage que vous pouvez t&eacute;l&eacute;charger &agrave;
+ <a href="https://wurca.univ-reims.fr/Charte.pdf">l'adresse suivante</a>.<br>
+Ce compte pourra &ecirc;tre coup&eacute; en cas de non-respect de cette charte.<br>
+<br>
+<i>Ce message est g&eacute;n&eacute;r&eacute; automatiquement, merci de ne pas y r&eacute;pondre.</i><br>
+<br>
+--<br>
+<br>
+Centre de Ressources Informatiques<br>
+Universite de Reims Champagne Ardenne<br>
+<br>
+Campus du Moulin de la Housse<br>
+BP 1039 - 51687 Reims cedex 2<br>
+<br>
+Tel: 03.26.91.31.86<br>
+Fax: 03.26.91.31.87<br>
+</body>
+</html>

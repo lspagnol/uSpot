@@ -1,0 +1,40 @@
+#!/bin/bash
+#
+#%# family=contrib
+#%# capabilities=autoconf
+
+if [ "$1" = "config" ]; then
+cat<<EOF
+graph_title Current trafic (simple)
+graph_vlabel Bits per \${graph_period}
+graph_category uSpot
+graph_info Current trafic
+graph_args --base 1000
+class01.label Class 0+1 trafic
+class01.info Internal & partners networks
+class01.type DERIVE
+class01.draw AREA
+class01.min 0
+class01.cdef class01,8,*
+class23.label Class 2+3 trafic
+class23.info Internet & offload
+class23.type DERIVE
+class23.draw STACK
+class23.min 0
+class23.cdef class23,8,*
+total.label Total
+total.info Total
+total.type DERIVE
+total.min 0
+total.cdef total,8,*
+total.colour 000000
+total.draw LINE2
+EOF
+exit 0
+fi
+
+eval $(sudo /usr/bin/tsp -nf /sbin/iptables -nvxL counters |awk '{print $3" "$2}' |grep '^CLASS' |grep -v ' 0$' |sed -e 's/\(^CLASS\)\([0-9]\) \([0-9]*\)/\1\2=$(( ${\1\2} + \3 ))/g')
+
+echo "class01.value $(( ${CLASS0:-0} + ${CLASS1:-0} ))"
+echo "class23.value $(( ${CLASS2:-0} + ${CLASS3:-0} ))"
+echo "total.value $(( ${CLASS0:-0} + ${CLASS1:-0} + ${CLASS2:-0} + ${CLASS3:-0} ))"

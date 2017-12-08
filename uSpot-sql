@@ -1,0 +1,629 @@
+#!/bin/bash
+# uSpot-sql
+
+########################################################################
+
+. /usr/local/uSpot/uSpot-functions
+
+########################################################################
+# Aide
+
+if [ -z ${1} ] || [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage: uSpot-sql <view> <args>
+
+Views: logs|logs2
+       sessions|session2|sessions3
+       login_summary|login_summary2|login_summary3
+       mac_summary|mac_summary2|mac_summary3
+       summary|wlan_cnxs_summary|wlan_traf_summary|wlan_traf_summary2
+       unique_logins|unique_macs
+
+Args:  -login <login>
+       -mac <mac>
+       -ip <ip> (SQL wilcards are allowed)
+       -host <host>
+       -wlan <wlan id>
+       -order <field>
+       -order "<field> asc|desc"
+       -limit <number of records>
+       -date <date>
+
+Date format: J/M/AAAA or JJ/MM/AAAA
+             J/M/AAAA          => this date
+             J/M/AAAA-         => from this date
+            -J/M/AAAA          => to this date
+             J/M/AAAA-J/M/AAAA => between theses two dates
+             -                 => all dates
+
+Default dates for views:
+       logs|summary|unique_logins|unique_macs => 'today'
+       mac_summary|login_summary              => '${QUOTAS_PERIOD}'
+
+EOF
+exit 0
+fi
+
+########################################################################
+
+case ${1} in
+	logs|logs2|sessions|sessions2|sessions3|\
+	 summary|\
+	 mac_summary|mac_summary2|mac_summary3|\
+	 login_summary|login_summary2|login_summary3|\
+	 unique_logins|unique_macs|\
+	 wlan_cnxs_summary|wlan_traf_summary|wlan_traf_summary2)
+		view=${1}
+		shift
+	;;
+	*)
+		echo "ERROR: <view> is required"
+		exit 1
+	;;
+esac
+
+########################################################################
+
+while  [ $? -eq 0 ] ; do # lecture des arguments
+	case ${1} in
+		-date)
+			date=${2}
+			if  [ "${date}" != "-" ] ; then
+				begin=${2%-*}
+				end=${2#*-}
+			fi
+		;;
+		-order)
+			ORDER="ORDER BY ${2}"
+			_order="${2}"
+		;;
+		-limit)
+			LIMIT="LIMIT ${2}"
+			_limit="${2}"
+		;;
+		-login)
+			LOGIN="AND log_login='${2}'"
+		;;
+		-mac)
+			MAC="AND log_mac='${2}'"
+		;;
+		-ip)
+			IP="AND log_ip LIKE '${2}'"
+		;;
+		-host)
+			host="${2}"
+			HOST1="AND log_host='${2}'"
+		;;
+		-wlan)
+			WLAN="AND log_wlan_id='${2}'"
+		;;
+		-unit)
+			unit=${2}
+			case ${unit} in
+				b|B) div="1";;
+				kb|KB) div="1024";;
+				mb|MB) div="1048576";;
+				gb|GB) div="1073741824";;
+				*) { echo "ERROR: bad unit '${unit}'" ; exit 1 ; };;
+			esac
+		;;
+		-group)
+			group=1
+		;;
+	esac
+	shift ; shift
+done
+
+unit=${unit-${DEFAULT_UNIT}}
+div=${div-${DEFAULT_DIV}}
+
+if [ -z ${host} ] ; then
+	HOST2="log_host AS host,"
+fi
+
+if  [ -z ${date} ] ; then
+
+	case ${view} in
+		logs|logs2|summary|unique_logins|unique_macs|wlan_cnxs_summary|wlan_traf_summary|wlan_traf_summary2)
+			begin=$(date +%d/%m/%Y)
+		;;
+		login_summary|login_summary2|login_summary3|mac_summary|mac_summary2|mac_summary3)
+			begin=$(date -d "${QUOTAS_PERIOD}" +%d/%m/%Y)
+		;;
+	esac
+
+fi
+
+if [ ! -z ${begin} ] ; then
+	ebegin="$(echo ${begin} |cut -d/ -f2)/$(echo ${begin} |cut -d/ -f1)/$(echo ${begin} |cut -d/ -f3)"
+	epoch_begin=$(date -d "${ebegin}" +%s)
+fi
+
+if [ ! -z ${end} ] ; then
+	eend="$(echo ${end} |cut -d/ -f2)/$(echo ${end} |cut -d/ -f1)/$(echo ${end} |cut -d/ -f3)"
+	epoch_end=$(date -d "${eend} + 24 hours" +%s)
+fi
+
+if [ ! -z ${epoch_begin} ] ; then
+	DATE="AND log_grant >= '${epoch_begin}'"
+fi
+
+if [ ! -z ${epoch_end} ] ; then
+	DATE="$DATE AND log_grant < '${epoch_end}'"
+fi
+
+BEG="DATE_FORMAT(FROM_UNIXTIME(log_grant),\"%d/%m/%Y %H:%i\") AS begin"
+END="DATE_FORMAT(FROM_UNIXTIME(log_revoke),\"%d/%m/%Y %H:%i\") AS end"
+DUR="SEC_TO_TIME(log_revoke-log_grant) AS duration"
+
+case ${view} in
+
+	summary)
+		req="
+		 SELECT
+		  SUM(log_bytes_dl0) DIV ${div} AS class0_dl,
+		  SUM(log_bytes_up0) DIV ${div} AS class0_up,
+		  SUM(log_bytes_dl1) DIV ${div} AS class1_dl,
+		  SUM(log_bytes_up1) DIV ${div} AS class1_up,
+		  SUM(log_bytes_dl2) DIV ${div} AS class2_dl,
+		  SUM(log_bytes_up2) DIV ${div} AS class2_up,
+		  SUM(log_bytes_dl3) DIV ${div} AS class3_dl,
+		  SUM(log_bytes_up3) DIV ${div} AS class3_up,
+		  SUM(log_bytes_dl0 + log_bytes_up0) DIV ${div} AS total_class0,
+		  SUM(log_bytes_dl1 + log_bytes_up1) DIV ${div} AS total_class1,
+		  SUM(log_bytes_dl2 + log_bytes_up2) DIV ${div} AS total_class2,
+		  SUM(log_bytes_dl3 + log_bytes_up3) DIV ${div} AS total_class3,
+		  SUM(log_bytes_dl0 + log_bytes_dl1 + log_bytes_dl2 + log_bytes_dl3) DIV ${div} AS total_dl,
+		  SUM(log_bytes_up0 + log_bytes_up1 + log_bytes_up2 + log_bytes_up3) DIV ${div} AS total_up,
+		  SUM(log_bytes_dl0 + log_bytes_up0 + log_bytes_dl1 + log_bytes_up1) DIV ${div} AS total_renater,
+		  SUM(log_bytes_dl2 + log_bytes_up2 + log_bytes_dl3 + log_bytes_up3) DIV ${div} AS total_internet,
+		  SUM(log_bytes_dl0 + log_bytes_up0 + log_bytes_dl1 + log_bytes_up1 + log_bytes_dl2 + log_bytes_up2 + log_bytes_dl3 + log_bytes_up3) DIV ${div} AS total_all,
+		  COUNT(log_grant) AS cnxs,
+		  SUM(log_revoke-log_grant) DIV 3600 AS hours
+		 FROM logs
+		 WHERE 1
+		 ${DATE}
+		 ${HOST1}
+		 ${WLAN}
+		 ${IP}
+		 ;
+		 SELECT
+		  COUNT(DISTINCT log_login) AS unique_logins
+		 FROM logs
+		 WHERE 1
+		 ${DATE}
+		 ${HOST1}
+		 ${WLAN}
+		 ${IP}
+		 ;
+		 SELECT
+		  COUNT(DISTINCT log_mac) AS unique_macs
+		 FROM logs
+		 WHERE 1
+		 ${DATE}
+		 ${HOST1}
+		 ${WLAN}
+		 ${IP}
+		 ;
+		 SELECT
+		  COUNT(log_grant) AS cnxs_external
+		 FROM logs
+		  WHERE log_login LIKE '%@%'
+		 ${DATE}
+		 ${HOST1}
+		 ${WLAN}
+		 ${IP}
+		 ;
+		 SELECT
+		  COUNT(DISTINCT log_login) AS unique_logins_external
+		 FROM logs
+		 WHERE log_login LIKE '%@%'
+		 ${DATE}
+		 ${HOST1}
+		 ${WLAN}
+		 ${IP}
+		 ;"
+	;;
+
+	login_summary)
+		req="
+		 SELECT
+		  log_login AS login,
+		  sum(log_bytes_dl0+log_bytes_up0+log_bytes_dl1+log_bytes_up1) DIV ${div} AS class01,
+		  sum(log_bytes_dl2+log_bytes_up2+log_bytes_dl3+log_bytes_up3) DIV ${div} AS class23,
+		  count(log_grant) AS cnxs,
+		  SEC_TO_TIME(sum(log_revoke-log_grant)) AS duration
+		 FROM logs
+		 WHERE 1
+		  ${DATE}
+		  ${LOGIN}
+		  ${MAC}
+		  ${HOST1}
+		  ${WLAN}
+		  ${IP}
+		 GROUP BY
+		  login
+		 ${ORDER}
+		 ${LIMIT}
+		 ;"
+	;;
+
+	login_summary2)
+		req="
+		 SELECT
+		  log_login AS login,
+		  sum(log_bytes_dl0+log_bytes_up0) DIV ${div} AS class0,
+		  sum(log_bytes_dl1+log_bytes_up1) DIV ${div} AS class1,
+		  sum(log_bytes_dl2+log_bytes_up2) DIV ${div} AS class2,
+		  sum(log_bytes_dl3+log_bytes_up3) DIV ${div} AS class3,
+		  count(log_grant) AS cnxs,
+		  SEC_TO_TIME(sum(log_revoke-log_grant)) AS duration
+		 FROM logs
+		 WHERE 1
+		  ${DATE}
+		  ${LOGIN}
+		  ${MAC}
+		  ${HOST1}
+		  ${WLAN}
+		  ${IP}
+		 GROUP BY
+		  login
+		 ${ORDER}
+		 ${LIMIT}
+		 ;"
+	;;
+
+	login_summary3)
+		req="
+		 SELECT
+		  log_login AS login,
+		  sum(log_bytes_dl0) DIV ${div} AS dl0,
+		  sum(log_bytes_dl1) DIV ${div} AS dl1,
+		  sum(log_bytes_dl2) DIV ${div} AS dl2,
+		  sum(log_bytes_dl3) DIV ${div} AS dl3,
+		  sum(log_bytes_up0) DIV ${div} AS up0,
+		  sum(log_bytes_up1) DIV ${div} AS up1,
+		  sum(log_bytes_up2) DIV ${div} AS up2,
+		  sum(log_bytes_up3) DIV ${div} AS up3,
+		  count(log_grant) AS cnxs,
+		  SEC_TO_TIME(sum(log_revoke-log_grant)) AS duration
+		 FROM logs
+		 WHERE 1
+		  ${DATE}
+		  ${LOGIN}
+		  ${MAC}
+		  ${HOST1}
+		  ${WLAN}
+		  ${IP}
+		 GROUP BY
+		  login
+		 ${ORDER}
+		 ${LIMIT}
+		 ;"
+	;;
+
+	mac_summary)
+		req="
+		 SELECT
+		  log_mac AS mac,
+		  sum(log_bytes_dl0+log_bytes_up0+log_bytes_dl1+log_bytes_up1) DIV ${div} AS class01,
+		  sum(log_bytes_dl2+log_bytes_up2+log_bytes_dl3+log_bytes_up3) DIV ${div} AS class23,
+		  count(log_grant) AS cnxs,
+		  SEC_TO_TIME(sum(log_revoke-log_grant)) AS duration
+		 FROM logs
+		 WHERE 1
+		  ${DATE}
+		  ${LOGIN}
+		  ${MAC}
+		  ${HOST1}
+		  ${WLAN}
+		  ${IP}
+		 GROUP BY
+		  mac
+		 ${ORDER}
+		 ${LIMIT}
+		 ;"
+	;;
+
+	mac_summary2)
+		req="
+		 SELECT
+		  log_mac AS mac,
+		  sum(log_bytes_dl0+log_bytes_up0) DIV ${div} AS class0,
+		  sum(log_bytes_dl1+log_bytes_up1) DIV ${div} AS class1,
+		  sum(log_bytes_dl2+log_bytes_up2) DIV ${div} AS class2,
+		  sum(log_bytes_dl3+log_bytes_up3) DIV ${div} AS class3,
+		  count(log_grant) AS cnxs,
+		  SEC_TO_TIME(sum(log_revoke-log_grant)) AS duration
+		 FROM logs
+		 WHERE 1
+		  ${DATE}
+		  ${LOGIN}
+		  ${MAC}
+		  ${HOST1}
+		  ${WLAN}
+		  ${IP}
+		 GROUP BY
+		  mac
+		 ${ORDER}
+		 ${LIMIT}
+		 ;"
+	;;
+
+	mac_summary3)
+		req="
+		 SELECT
+		  log_mac AS mac,
+		  sum(log_bytes_dl0) DIV ${div} AS dl0,
+		  sum(log_bytes_dl1) DIV ${div} AS dl1,
+		  sum(log_bytes_dl2) DIV ${div} AS dl2,
+		  sum(log_bytes_dl3) DIV ${div} AS dl3,
+		  sum(log_bytes_up0) DIV ${div} AS up0,
+		  sum(log_bytes_up1) DIV ${div} AS up1,
+		  sum(log_bytes_up2) DIV ${div} AS up2,
+		  sum(log_bytes_up3) DIV ${div} AS up3,
+		  count(log_grant) AS cnxs,
+		  SEC_TO_TIME(sum(log_revoke-log_grant)) AS duration
+		 FROM logs
+		 WHERE 1
+		  ${DATE}
+		  ${LOGIN}
+		  ${MAC}
+		  ${HOST1}
+		  ${WLAN}
+		  ${IP}
+		 GROUP BY
+		  mac
+		 ${ORDER}
+		 ${LIMIT}
+		 ;"
+	;;
+
+	unique_macs)
+		req="
+		 SELECT DISTINCT
+		  log_mac AS mac
+		 FROM logs
+		 WHERE 1
+		 ${DATE}
+		 ${HOST1}
+		 ${WLAN}
+		 ${IP}
+		 ;"
+	;;
+
+	unique_logins)
+		req="
+		 SELECT DISTINCT
+		  log_login AS login
+		 FROM logs
+		 WHERE 1
+		 ${DATE}
+		 ${HOST1}
+		 ${WLAN}
+		 ${IP}
+		 ;"
+	;;
+
+	logs)
+		req="
+		 SELECT
+		  ${HOST2}
+		  log_wlan_id as wlan,
+		  log_mac AS mac,
+		  log_ip AS ip,
+		  log_login AS login,
+		  (log_bytes_dl0 + log_bytes_up0) DIV ${div} AS class0,
+		  (log_bytes_dl1 + log_bytes_up1) DIV ${div} AS class1,
+  		  (log_bytes_dl2 + log_bytes_up2) DIV ${div} AS class2,
+  		  (log_bytes_dl3 + log_bytes_up3) DIV ${div} AS class3,
+  		  ${BEG},
+		  ${END},
+		  ${DUR}
+		 FROM logs
+		 WHERE 1
+		  ${DATE}
+		  ${LOGIN}
+		  ${MAC}
+		  ${HOST1}
+		  ${WLAN}
+		  ${IP}
+		 ${ORDER}
+		 ${LIMIT}
+		 ;"
+	;;
+
+	logs2)
+		req="
+		 SELECT
+		  ${HOST2}
+		  log_wlan_id as wlan,
+		  log_mac AS mac,
+		  log_ip AS ip,
+		  log_login AS login,
+		  log_bytes_dl0 DIV ${div} AS dl0,
+		  log_bytes_dl1 DIV ${div} AS dl1,
+		  log_bytes_dl2 DIV ${div} AS dl2,
+		  log_bytes_dl3 DIV ${div} AS dl3,
+		  log_bytes_up0 DIV ${div} AS up0,
+		  log_bytes_up1 DIV ${div} AS up1,
+		  log_bytes_up2 DIV ${div} AS up2,
+		  log_bytes_up3 DIV ${div} AS up3,
+  		  ${BEG},
+		  ${END},
+		  ${DUR}
+		 FROM logs
+		 WHERE 1
+		  ${DATE}
+		  ${LOGIN}
+		  ${MAC}
+		  ${HOST1}
+		  ${WLAN}
+		  ${IP}
+		 ${ORDER}
+		 ${LIMIT}
+		 ;"
+	;;
+
+	sessions)
+		req="
+		 SELECT
+		  ${HOST2}
+		  log_wlan_id as wlan,
+		  log_mac AS mac,
+		  log_ip AS ip,
+		  log_login AS login,
+		  (log_bytes_dl0 + log_bytes_up0 + log_bytes_dl1 + log_bytes_up1) DIV ${div} AS class01,
+  		  (log_bytes_dl2 + log_bytes_up2 + log_bytes_dl3 + log_bytes_up3) DIV ${div} AS class23,
+  		  ${BEG},
+		  SEC_TO_TIME(unix_timestamp(now())-log_grant) AS duration
+		 FROM logs
+		 WHERE log_revoke IS NULL
+		  ${DATE}
+		  ${LOGIN}
+		  ${MAC}
+		  ${HOST1}
+		  ${WLAN}
+		  ${IP}
+		 ${ORDER}
+		 ${LIMIT}
+		 ;"
+	;;
+
+	sessions2)
+		req="
+		 SELECT
+		  ${HOST2}
+		  log_wlan_id as wlan,
+		  log_mac AS mac,
+		  log_ip AS ip,
+		  log_login AS login,
+		  (log_bytes_dl0 + log_bytes_up0) DIV ${div} AS class0,
+		  (log_bytes_dl1 + log_bytes_up1) DIV ${div} AS class1,
+  		  (log_bytes_dl2 + log_bytes_up2) DIV ${div} AS class2,
+  		  (log_bytes_dl3 + log_bytes_up3) DIV ${div} AS class3,
+  		  ${BEG},
+		  SEC_TO_TIME(unix_timestamp(now())-log_grant) AS duration
+		 FROM logs
+		 WHERE log_revoke IS NULL
+		  ${DATE}
+		  ${LOGIN}
+		  ${MAC}
+		  ${HOST1}
+		  ${WLAN}
+		  ${IP}
+		 ${ORDER}
+		 ${LIMIT}
+		 ;"
+	;;
+
+	sessions3)
+		req="
+		 SELECT
+		  ${HOST2}
+		  log_wlan_id as wlan,
+		  log_mac AS mac,
+		  log_ip AS ip,
+		  log_login AS login,
+		  log_bytes_dl0 DIV ${div} AS dl0,
+		  log_bytes_dl1 DIV ${div} AS dl1,
+		  log_bytes_dl2 DIV ${div} AS dl2,
+		  log_bytes_dl3 DIV ${div} AS dl3,
+		  log_bytes_up0 DIV ${div} AS up0,
+		  log_bytes_up1 DIV ${div} AS up1,
+		  log_bytes_up2 DIV ${div} AS up2,
+		  log_bytes_up3 DIV ${div} AS up3,
+  		  ${BEG},
+		  SEC_TO_TIME(unix_timestamp(now())-log_grant) AS duration
+		 FROM logs
+		 WHERE log_revoke IS NULL
+		  ${DATE}
+		  ${LOGIN}
+		  ${MAC}
+		  ${HOST1}
+		  ${WLAN}
+		  ${IP}
+		 ${ORDER}
+		 ${LIMIT}
+		 ;"
+	;;
+
+	wlan_cnxs_summary)
+		req="
+		 SELECT
+		  log_host AS host,
+		  log_wlan_id AS wlan,
+		  count(log_grant) AS cnxs
+		 FROM logs
+		 WHERE 1
+		  ${DATE}
+		 GROUP BY
+		  wlan
+		 ORDER BY
+		  cnxs DESC
+		 ;"
+	;;
+
+	wlan_traf_summary)
+		req="
+		 SELECT
+		  log_host AS host,
+		  log_wlan_id AS wlan,
+		  SUM(log_bytes_dl0 + log_bytes_up0 + log_bytes_dl1 + log_bytes_up1 + log_bytes_dl2 + log_bytes_up2 + log_bytes_dl3 + log_bytes_up3) DIV ${div} AS class0123
+  		 FROM logs
+		 WHERE 1
+		  ${DATE}
+		 GROUP BY
+		  wlan
+		 ORDER BY
+		  class0123 DESC
+		 ;"
+	;;
+
+	wlan_traf_summary2)
+		req="
+		 SELECT
+		  log_host AS host,
+		  log_wlan_id AS wlan,
+		  SUM(log_bytes_dl0 + log_bytes_up0 + log_bytes_dl1 + log_bytes_up1) DIV ${div} AS class01,
+  		  SUM(log_bytes_dl2 + log_bytes_up2 + log_bytes_dl3 + log_bytes_up3) DIV ${div} AS class23
+		 FROM logs
+		 WHERE 1
+		  ${DATE}
+		 GROUP BY
+		  wlan
+		 ORDER BY
+		  class23 DESC, class01 DESC
+		 ;"
+	;;
+
+esac
+
+req="$(echo "${req}" |tr -d "\t" |egrep -v '^[[:space:]]*$')"
+
+cat<<EOF
+View : ${view}
+Host : ${host:-*}
+Wlan : ${wlan:-*}
+Dates: ${begin:-*} > ${end:-*}
+Sort : ${_order:-*}
+Limit: ${_limit:-*}
+Unit : ${unit}
+
+EOF
+
+if [ ! -z ${DEBUG} ] ; then
+	echo -e "\n${req}\n"
+fi
+	
+case ${view} in
+	summary)
+		echo "${req}" |MYSQL --vertical |grep ": " |awk '{print $1" "$2}'
+	;;
+	unique_logins|unique_macs)
+		echo "${req}" |MYSQL --vertical |grep ": " |awk '{print $2}'
+	;;
+	*)
+		echo "${req}" |MYSQL --table
+	;;
+esac

@@ -1,0 +1,140 @@
+ServerAdmin wifi-admin@##DOMAIN##
+ServerSignature Off
+
+LogLevel warn
+#LogLevel debug
+
+ErrorLog	/var/log/apache2/error.log
+CustomLog	/var/log/apache2/access.log combined
+
+DocumentRoot /var/www
+
+<Directory />
+	Options FollowSymLinks
+	AllowOverride None
+</Directory>
+
+<Directory /var/www/>
+	Options Indexes FollowSymLinks MultiViews
+	AllowOverride None
+	Order allow,deny  
+	allow from all
+</Directory>
+
+<Files ~ "test\.php|~$">
+	Order Allow,Deny
+	Deny from all
+</Files>
+
+<VirtualHost *:80>
+
+	# Renvoi de toutes les requettes non authentifiees sur la page
+	# d'authentification du portail.
+	# L'URI est re-ecrite pour la redirection vers le site demande
+	
+	RewriteEngine On
+	RedirectMatch .* https://##PORTAL_FQDN##
+	RewriteCond %{HTTP_HOST} !^##PORTAL_HOSTNAME## [NC]
+	RewriteRule .* https://##PORTAL_FQDN##?url=%{HTTP_HOST}%{REQUEST_URI}?%{QUERY_STRING} [L,R]
+
+</VirtualHost>
+
+<VirtualHost *:81>
+
+	# Renvoi de toutes les requettes des machines blacklistees sur la
+	# page d'information "liste noire" du portail.
+	
+	RewriteEngine On
+	RedirectMatch .* https://##PORTAL_FQDN##/blacklist.php
+
+</VirtualHost>
+
+<VirtualHost *:82>
+
+	# Renvoi de toutes les requettes des sessions en OVERQUOTA Classe 0
+	
+	RewriteEngine On
+	RedirectMatch .* https://##PORTAL_FQDN##/overquota.php?class=0
+
+</VirtualHost>
+
+<VirtualHost *:83>
+
+	# Renvoi de toutes les requettes des sessions en OVERQUOTA Classe 1
+	
+	RewriteEngine On
+	RedirectMatch .* https://##PORTAL_FQDN##/overquota.php?class=1
+
+</VirtualHost>
+
+<VirtualHost *:84>
+
+	# Renvoi de toutes les requettes des sessions en OVERQUOTA Classe 2
+	
+	RewriteEngine On
+	RedirectMatch .* https://##PORTAL_FQDN##/overquota.php?class=2
+
+</VirtualHost>
+
+<VirtualHost *:85>
+
+	# Renvoi de toutes les requettes des sessions en OVERQUOTA Classe 3
+	
+	RewriteEngine On
+	RedirectMatch .* https://##PORTAL_FQDN##/overquota.php?class=3
+
+</VirtualHost>
+
+<VirtualHost *:86>
+
+	# Renvoi vers la page info / deconnexion
+	
+	RewriteEngine On
+	RedirectMatch .* https://##PORTAL_FQDN##/portal.php
+
+</VirtualHost>
+
+<VirtualHost *:443>
+
+	# Services d'authentification
+	
+	# Indispensable pour Shibboleth
+	UseCanonicalName On
+	
+	# Config SSL
+	SSLEngine On
+	SSLProtocol All -SSLv2 -SSLv3
+	SSLCertificateFile /etc/uSpot/cert-##PORTAL_FQDN##.pem
+	SSLCertificateKeyFile /etc/uSpot/##PORTAL_FQDN##.key
+	SSLCertificateChainFile /etc/uSpot/chain-##PORTAL_FQDN##.pem
+	SSLVerifyClient none
+
+	# ** Authentification Cas **
+	Alias /auth_cas /var/www/grant.php
+	<Location /auth_cas>
+		AuthType cas
+		Require valid-user
+	</Location>
+
+	# ** Authentification Shibboleth **
+	ShibCompatValidUser On
+	Alias /auth_shib /var/www/grant.php
+	<Location /auth_shib>
+		AuthType shibboleth
+		ShibRequireSession On
+		Require valid-user
+	</Location>
+
+	# ** Authentification Invites (Externe / MySQL) **
+	AddExternalAuth invites /usr/local/uSpot/auth-guest.sh
+	SetExternalAuthMethod invites pipe
+	Alias /auth_guest /var/www/grant.php
+	<Location /auth_guest>
+		AuthType Basic
+		AuthName "Compte Invite / Guest Account"
+		AuthBasicProvider external
+		AuthExternal invites
+		Require valid-user
+	</Location>
+
+</VirtualHost>

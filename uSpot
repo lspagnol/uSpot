@@ -1,0 +1,172 @@
+#!/bin/bash
+# uSpot
+# Demarrage et arret du portail
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; either version 2 of the License, or
+#  (at your option) any later version.
+#  
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#  
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+#  MA 02110-1301, USA.
+#  
+
+########################################################################
+
+. /usr/local/uSpot/uSpot-functions
+
+########################################################################
+# Aide
+
+if [ -z ${1} ] || [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage: uSpot <command> [<args>] [-h]
+
+Main commands:
+
+  start|restart|stop|reload|suspend|resume
+
+  grant|revoke <MAC>,<IP>[,<USER>]
+
+  sessions [-c|-k]
+  stats
+  leases
+
+  kick <USER>
+  expunge [<SECONDS>]
+
+  prtwhitelist|lanwhitelist|wanwhitelist load|flush|show
+
+  macblacklist add|del|load|flush|show [<MAC>]
+  userblacklist add|del|show [<USER>]
+
+Optional commands (MySQL required):
+
+  guest add|newpasswd|del|mod|show [<ARGS>]
+  quotas <USER> set|unset|sel|show [<ARGS>]
+  sql <VIEW> [<ARGS>]
+
+EOF
+exit 0
+fi
+
+########################################################################
+
+cmd=${1}
+shift
+
+# Recharger la configuration dans la base SQL si necessaire
+case ${cmd} in
+
+	start|restart|reload)
+		if [ -f /var/run/mysqld/mysqld.pid ] ; then
+			if [ -r ${CONF}/mysql.conf ] ; then
+				. ${USPOT}/plugins/mysql/params_init.sh
+			fi
+		fi
+	;;
+
+esac
+
+# Fonctionnement "normal"
+case ${cmd} in
+
+	start|restart)
+		if [ -n "${PORTAL}" ] ; then
+			stop
+			start
+		fi
+	;;
+
+	stop|reload|suspend|resume)
+		if [ -n "${PORTAL}" ] ; then
+			${cmd}
+		fi
+	;;
+
+	kick|sessions|stats|leases|wanwhitelist|lanwhitelist|prtwhitelist|userblacklist|macblacklist)
+		if [ -n "${PORTAL}" ] ; then
+			${cmd} "${@}"
+		fi
+	;;
+
+	guest|quotas|sql)
+		${USPOT}/uSpot-${cmd} "${@}"
+	;;
+
+	grant|revoke|expunge)
+		if [ -n "${PORTAL}" ] ; then
+			${USPOT}/uSpot-${cmd} ${@//,/ }
+		fi
+	;;
+
+	*)
+		echo "ERROR: <command> is required"
+		exit 1
+	;;
+
+esac
+
+# Noeud de gestion
+
+if [ -n "${SLAVES}" ] ; then
+
+	case ${cmd} in
+
+		start|restart|stop|reload|suspend|resume|sessions|stats|leases|expunge|kick|prtwhitelist|lanwhitelist|wanwhitelist)
+
+			for slave in ${SLAVES} ; do
+				( ssh_available ${slave} && ssh ${slave} "uSpot ${cmd} $@" |awk -v slave=${slave} '{print slave" "$0}' ) &
+			done
+			wait
+
+		;;
+
+		macblacklist|userblacklist)
+
+			case ${1} in
+				
+				add|del)
+
+					${cmd} ${@}
+					for slave in ${SLAVES} ; do
+						(
+						 ssh_available ${slave} && scp -q ${CONF}/${cmd}.conf ${slave}:${CONF}/${cmd}.conf
+						 case ${cmd} in
+							macblacklist)
+								ssh_available ${slave} && ssh ${slave} "uSpot macblacklist load"
+							;;
+							userblacklist)
+								[ "${1}" = "add" ] && ssh_available ${slave} && ssh ${slave} "uSpot kick ${2}"
+							;;
+						 esac
+						) &
+					done
+					wait
+				
+				;;
+
+				show)
+
+					${cmd} show |awk -v slave=${HOSTNAME} '{print slave" "$0}'
+					for slave in ${SLAVES} ; do
+						( ssh_available ${slave} && ssh ${slave} "uSpot ${cmd} show" |awk -v slave=${slave} '{print slave" "$0}') &
+					done |grep "(L)"
+					wait
+
+				;;
+
+			esac
+
+		;;
+
+	esac
+
+fi

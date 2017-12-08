@@ -1,0 +1,13 @@
+/var/log/uSpot/uSpot.log
+{
+        rotate 30
+        daily
+        dateext
+        missingok
+        notifempty
+        delaycompress
+        compress
+        postrotate
+                reload rsyslog >/dev/null 2>&1 || true
+        endscript
+}

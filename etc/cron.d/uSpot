@@ -1,0 +1,19 @@
+# Taches periodiques du portail uSpot
+
+# Mise a jour des quotas
+0-59/5	*	* * *	root	/usr/local/uSpot/uSpot-periodic
+
+# Purge du cache CAS
+1-59/5	*	* * *	root	/usr/bin/find /var/cache/apache2/mod_auth_cas/ -type f -mmin +720 -exec rm {} \;
+
+# Redemarrage du portail
+2	4	* * *	root	/usr/local/sbin/uSpot restart
+
+# Redemarrage du serveur DHCP (forcer rotation dhcpd.leases)
+2	6	* * *	root	service isc-dhcp-server restart >/dev/null
+
+# Mise a jour liste blanche des portails d'authentification
+3	11	* * *	root	/usr/local/uSpot/uSpot wanwhitelist load
+3	23	* * *	root	/usr/local/uSpot/uSpot wanwhitelist load
+
+#

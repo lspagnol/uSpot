@@ -1,0 +1,352 @@
+#!/bin/bash
+# uSpot.conf
+# Fichier de configuration
+
+# Si on dispose de plusieurs portails captifs, la configuration peut
+# etre surchargee localement via '/etc/uSpot/uSpot_HOSTNAME.conf',
+# 'HOSTNAME' correspondant au nom court du serveur.
+# Les variables concernees sont le plus souvent: 'IF_LAN', 'IF_WLAN' et
+# surtout 'PORTAL' et 'SLAVES' !
+
+########################################################################
+# Section LOCALE (peut etre surcharge par 'uSpot_${HOSTNAME}.conf'
+########################################################################
+
+# Adresse portail captif cote LAN
+# => si renseigne, le noeud sera implicitement en mode portail
+#PORTAL="172.16.31.1"
+
+# Declaration des noeuds esclaves:
+# => si renseigne, le noeud sera implicitement en mode gestion
+# Separateur => virgule
+#SLAVES="eduspot-rs"
+
+# Interface cote LAN
+# Format => 'interface[.vlan]'
+# Separateur => virgule
+#IF_LAN="eth0"
+
+# Interface(s) cote WLAN
+# Format => 'interface[.vlan]'
+# Separateur => virgule
+#IF_WLAN="eth2.62,eth2.135"
+
+########################################################################
+# Section GLOBALE
+########################################################################
+
+# Tuning Kernel
+# Separateur => virgule
+KERNEL_TUNING="
+ net.netfilter.nf_conntrack_tcp_timeout_established=28800,
+ net.nf_conntrack_max=655360,
+ net.ipv4.neigh.default.gc_thresh1=256,
+ net.ipv4.neigh.default.gc_thresh2=2048,
+ net.ipv4.neigh.default.gc_thresh3=4096
+"
+
+# Redirections
+
+# Attente avant redirection (secondes)
+REDIRECT_TIMEWAIT=10
+
+# HTTP pour MAC non authentifiees
+REDIRECT_PORT_UNAUTH=80
+
+# HTTP pour MAC en liste noire
+REDIRECT_PORT_BLACKLIST=81
+
+# HTTP pour OVERQUOTA CLASSE 0
+REDIRECT_PORT_OVERQUOTA0=82
+
+# HTTP pour OVERQUOTA CLASSE 0
+REDIRECT_PORT_OVERQUOTA1=83
+
+# HTTP pour OVERQUOTA CLASSE 1
+REDIRECT_PORT_OVERQUOTA2=84
+
+# HTTP pour OVERQUOTA CLASSE 2
+REDIRECT_PORT_OVERQUOTA3=85
+
+# HTTP pour acces au portail principal (info / deconnexion)
+REDIRECT_PORT_AUTH=86
+
+# Adresse du portail principal (info / deconnexion)
+PORTAL_MAIN="194.57.104.6"
+
+# Acces toujours autorises du WLAN au portail
+# Trafic hors quotas
+# Format => 'proto/port"
+# Protocoles => tcp,udp,any
+# Separateur => virgule
+PRT_WHITELIST="tcp/80,tcp/81,tcp/443,udp/123"
+
+# Destinations toujours ouvertes (reseaux internes)
+# Trafic hors quotas
+# Format => 'IP:proto/port'
+# Protocoles => tcp,udp,any
+# Separateur => virgule
+LAN_WHITELIST="
+ns-cache1.univ-reims.fr:udp/53,ns-cache2.univ-reims.fr:udp/53,
+cas.univ-reims.fr:tcp/443,idp.univ-reims.fr:tcp/443,
+esuptools.univ-reims.fr:tcp/80,julie.univ-reims.fr:tcp/443,
+vpn-urca.univ-reims.fr:any,vpn-cri.univ-reims.fr:any"
+
+# Destinations toujours ouvertes (reseaux externes)
+# Trafic hors quotas
+# Format => 'IP:proto/port'
+# Protocoles => tcp,udp,any
+# Separateur => virgule
+WAN_WHITELIST="discovery.renater.fr:tcp/443,ocsp.tcs.terena.org:tcp/80,idp.crous-reims.fr:tcp/443,193.55.213.210:any"
+
+# Whitelist Renater (portails d'authentification de la federation)
+WAN_WHITELIST_URL="https://www.cru.fr/eduspot/whitelist-eduspot.txt"
+
+# URL de redirection des acces refuses apres authentification
+ACCESS_DENIED_URL="http://wireless.univ-reims.fr?rub=2"
+
+# Rejeter les identifiants qui contiennent ces domaines (regexp)
+# => Authentification Shibboleth et comptes invites
+BLACKLISTED_DOMAINS="@(univ-reims.fr|etudiant.univ-reims.fr|reims.iufm.fr)\$"
+
+########################################################################
+
+# Quotas
+# Durees et volumes: '0' => pas de limite
+
+# Periode de recherche des quotas (format de la commande 'date')
+QUOTAS_PERIOD="1 month ago"
+
+# Unite d'affichage par defaut (B,KB,MB,GB)
+DEFAULT_UNIT="MB"
+
+# Autoriser l'ouverture de session si un quota de volumetrie est depasse
+PERMIT_OVERQUOTA=1
+
+# Nombre maximum de sessions simultanees pour un utilisateur
+MAX_SESSIONS=2
+
+# Duree maximale de session (secondes)
+#MAX_DURATION=28800
+MAX_DURATION=33600
+
+# Duree maximale de connexion cumulee (secondes)
+MAX_TIME=0
+
+# Les quotas sont appliques sur 3 classes de trafic:
+# classe 0 => reseaux internes
+# classe 1 => reseaux partenaires
+# classe 2 => internet, periodes creuses
+# classe 3 => intetnet, periodes pleines
+
+# Noms des classes de trafic
+NAME[0]="URCA"
+NAME[1]="Renater"
+NAME[2]="Internet HC"
+NAME[3]="Internet HP"
+
+# Quotas volumes cumules (unite => DEFAULT_UNIT)
+MAX_BYTES_CLASS[0]=0
+MAX_BYTES_CLASS[1]=0
+MAX_BYTES_CLASS[2]=0
+MAX_BYTES_CLASS[3]=0
+
+# Liste blanche (reseaux internes) => etablissement
+# Format => 'CIDR'
+# Separateur => virgule
+LAN_GREYLIST="194.57.103.0/24,194.57.104.0/24,194.57.105.0/24,193.50.208.0/21"
+
+# Liste blanche (reseaux partenaires) => Renater
+# Source: ftp://ftp.ripe.net/pub/stats/ripencc/membership/alloclist.txt
+# Format => 'CIDR'
+# Separateur => virgule
+WAN_GREYLIST="193.48.0.0/14,193.52.0.0/16,193.54.0.0/15,194.57.0.0/16,194.167.0.0/16,194.199.0.0/16,194.214.0.0/16,194.254.0.0/16,195.220.0.0/16,195.221.0.0/16,195.83.0.0/19,195.83.32.0/19,195.83.128.0/17,195.83.64.0/18,195.98.224.0/19,81.194.0.0/16"
+
+########################################################################
+
+# Periodes "creuses"
+# Attention => bien respecter les formats attendus
+
+# Plages horaires
+# Format => HH:MM-HH:MM
+# Separateur => virgule
+OFFPEAK_HOURS="19:00-08:00,12:00-14:00"
+
+# Jours de la semaine
+# Separateur => virgule
+OFFPEAK_WEEKDAYS="Sat,Sun"
+
+# Dates (jours feries fixes)
+# Format => JJ/MM
+# Separateur => virgule
+OFFPEAK_DAYS1="01/01,01/05,08/05,14/07,15/08,01/11,11/11,25/12"
+
+# Dates (jours feries variables)
+# Format => JJ/MM/AAAA
+# Separateur => virgule
+OFFPEAK_DAYS2="01/04/2013,09/05/2013,20/05/2013"
+
+# Plages de dates (conges)
+# Format => JJ/MM/AAAA-JJ/MM/AAAA
+# Separateur => virgule
+OFFPEAK_PERIODS="19/10/2013-03/11/2013,21/12/2013-05/01/2014,22/02/2014-09/03/2014,19/04/2014-04/05/2014"
+
+########################################################################
+
+# 'Facility' Syslog
+FACILITY="local6.info"
+
+# Commandes
+IPTABLES="/usr/bin/tsp -nf /sbin/iptables"
+SUDO="/usr/bin/sudo"
+SYSCTL="/sbin/sysctl"
+
+# Repertoire uSpot
+USPOT="/usr/local/uSpot"
+
+# Caches
+SESSIONS="/tmp/uSpot/sessions"     # sessions actives du portail
+REDIRECTS="/tmp/uSpot/redirects"   # redirections
+OVERQUOTAS="/tmp/uSpot/overquotas" # sessions en depassement de quota
+REVOKES="/tmp/uSpot/revokes"       # revocations d'acces (id demon atd)
+
+########################################################################
+
+# Plugins demarrage et arret du portail
+# Separateur => virgule ou espace
+
+PRE_START="
+ mysql/repair.sh
+"
+
+POST_START=""
+
+PRE_STOP="
+ periodic/mysql_log_upg.sh
+"
+
+POST_STOP="
+ mysql/log_close_all.sh
+"
+
+RELOAD=""
+
+########################################################################
+
+# Plugins "uSpot-grant" et "uSpot-revoke"
+# Separateur => virgule ou espace
+
+PRE_GRANT="
+ check/enabled.sh
+ mysql/params_get.sh
+ mysql/quotas_get.sh
+ mysql/stats_get.sh
+ session/quotas_fix.sh
+ session/stats_fix.sh
+ check/sessions.sh
+ check/time.sh
+ check/quotas.sh
+ check/user.sh
+ check/domain.sh
+"
+
+POST_GRANT="
+ iptables/stats_rules_add.sh
+ mysql/last_connexion_get.sh
+ mysql/log_open.sh
+ html/sessions.sh
+ html/last_connexion.sh
+ html/quotas.sh
+"
+
+PRE_REVOKE="
+ session/stats_get.sh
+"
+
+POST_REVOKE="
+ mysql/log_close.sh
+ misc/stats_syslog.sh
+ iptables/stats_rules_del.sh
+"
+
+PERIODIC_ACTIONS="
+ periodic/mysql_logs_upg.sh
+ periodic/mysql_stats_get.sh
+ periodic/check_quotas.sh
+"
+
+########################################################################
+
+# Gestion des comptes invites
+
+# Caracteres utilises pour generer un mot de passe
+PASSWD_CHR="abcdefghkmnpqrtwxyABCDEFGHKMNPQRTWXY2346789+-."
+
+# Longueur des mots de passe
+PASSWD_LEN=8
+
+# Methode de cryptage du mot de passe
+# sha1sum  => auth-mysql / Apache 2.2
+#          => authnz_external / auth-guest.sh / Apache 2.4
+# htpasswd => authn_dbd / Apache 2.4
+# ATTENTION: les deux methodes de cryptage utilisent SHA1
+# - 'sha1sum' => SHA1 au format hexadecimal
+# - 'htpassd' => SHA1 converti en binaire puis en BASE64
+# Pour convertir les mots de passe 'sha1sum' en 'htpasswd':
+# <?php echo base64_encode(pack("H*","mdp_au_format_sha1sum"));?>
+PASSWD_CRYPT_METHOD="sha1sum"
+
+# Heures de debut et fin de journee
+DFH=6
+DLH=23
+
+# Controle des dates et duree de validite pour la creation des nouvelles
+# sessions invite.
+# - Si la date courante depasse ${YFD}, la date maximale de
+#   fin de session ne pourra pas depasser ${YLD}.
+# - La periode de validite maximale ne pourra pas depasser ${GMD}
+YFD="01/09" # date debut periode (annee scolaire) => JJ/MM
+YLD="31/08" # date maximum de fin de session      => JJ/MM
+GMD="300"   # nombre maximum de jours
+
+# Configuration mail
+MAIL_FROM="eduspot-admin@univ-reims.fr"
+MAIL_FROM_PASSWD="eduspot-passwd@univ-reims.fr"
+MAIL_REPLY="noreply@univ-reims.fr"
+MAIL_DOMAIN="univ-reims.fr"
+MAIL_SUBJECT="Acces WIFI Eduspot URCA"
+MAIL_ACCOUNT_TPL="/etc/uSpot/mail_account_tpl.html"
+MAIL_SESSION_TPL="/etc/uSpot/mail_session_tpl.html"
+MAIL_PASSWD_TPL="/etc/uSpot/mail_passwd_tpl.html"
+MAIL_SUBJECT_VALIDATION="motdepasse"
+MAIL_NOACCOUNT_ERROR="Impossible de vous donner un nouveau mot de passe:\nvous n'avez pas de compte \"invit&eacute;\".\n"
+MAIL_NOSESSION_ERROR="Impossible de vous donner un nouveau mot de passe:\nvous n'avez pas d'invitation en cours ou &agrave; venir.\n"
+
+# Quotas: surcharge des valeurs globales
+# '0'  => pas de limite
+# vide => ignorer
+
+# Comptes nominatifs (avec adresse mail)
+GUEST_N_MAX_SESSIONS=
+GUEST_N_MAX_DURATION=
+GUEST_N_MAX_TIME=
+GUEST_N_MAX_BYTES_CLASS[0]=
+GUEST_N_MAX_BYTES_CLASS[1]=
+GUEST_N_MAX_BYTES_CLASS[2]=
+GUEST_N_MAX_BYTES_CLASS[3]=
+
+# Comptes generiques/groupes (sans adresse mail)
+GUEST_G_MAX_SESSIONS=0
+GUEST_G_MAX_DURATION=
+GUEST_G_MAX_TIME=
+GUEST_G_MAX_BYTES_CLASS[0]=
+GUEST_G_MAX_BYTES_CLASS[1]=
+GUEST_G_MAX_BYTES_CLASS[2]=0
+GUEST_G_MAX_BYTES_CLASS[3]=0
+
+########################################################################
+
+# Divers
+
+# Spooler du demon ATD
+ATD="/var/spool/cron/atjobs"

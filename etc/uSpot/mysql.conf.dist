@@ -1,0 +1,15 @@
+#!/bin/bash
+# mysql.conf
+
+# Ce fichier DEVRAIT avoir les droits root:root 600
+
+########################################################################
+
+# Configuration MySQL
+
+MYSQL_DB="base_eduspot"
+MYSQL_HOST="serveur_eduspot"
+MYSQL_USER="compte_eduspot"
+MYSQL_PASSWD="mot_de_passe_eduspot"
+
+########################################################################

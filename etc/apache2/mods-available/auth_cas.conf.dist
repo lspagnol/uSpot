@@ -1,0 +1,5 @@
+CASCookiePath		/var/cache/apache2/mod_auth_cas/
+CASCertificatePath	/etc/ssl/certs
+CASLoginURL		https://##CAS_SERVER_FQDN##/cas/login?service=http://##PORTAL_FQDN##/auth_cas
+CASValidateURL		https://##CAS_SERVER_FQDN##/cas/serviceValidate
+CASDebug Off

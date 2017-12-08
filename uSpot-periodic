@@ -1,0 +1,37 @@
+#!/bin/bash
+# uSpot-periodic
+# Actions et verifications periodiques:
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; either version 2 of the License, or
+#  (at your option) any later version.
+#  
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#  
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+#  MA 02110-1301, USA.
+#  
+
+########################################################################
+
+. /usr/local/uSpot/uSpot-functions
+
+########################################################################
+
+[ -f /etc/uSpot/uSpot.conf ] || { echo "Fichier de configuration manquant" ; exit 1 ; }
+. /etc/uSpot/uSpot.conf
+
+# Ne rien faire si le portail n'est pas ouvert
+enabled || exit 0
+
+for plugin in ${PERIODIC_ACTIONS} ; do
+	[ -f ${USPOT}/plugins/${plugin} ] && . ${USPOT}/plugins/${plugin}
+done
+
+exit 0

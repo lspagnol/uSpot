@@ -1,0 +1,134 @@
+#!/bin/bash
+# uSpot-revoke
+# Suppression de l'autorisation d'acces par le serveur DHCP
+
+########################################################################
+
+. /usr/local/uSpot/uSpot-functions
+
+########################################################################
+# Aide
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage: uSpot-revoke <ip> <mac>
+EOF
+exit 0
+fi
+
+########################################################################
+
+# Fin si le nombre minimal d'arguments n'est pas respecte
+[ -z ${2} ] && exit 1
+
+########################################################################
+
+# Re-ecriture de l'adresse MAC (rajout 0 non significatif supprime par DHCPD)
+mac=$(mac_rewrite ${1})
+ip=${2}
+
+########################################################################
+
+session_file="${SESSIONS}/${mac} ${ip}"
+counters_file="${COUNTERS}/${mac} ${ip}"
+revoke_file="${REVOKES}/${mac} ${ip}"
+
+# Pas de session en cache: bail alloue par DHCP mais pas d'authentification sur le portail => fin
+[ -f "${session_file}" ] || exit 0
+
+revoke=${EPOCH}
+
+redirect_file="${REDIRECTS}/${mac} ${ip}"
+[ -f "${redirect_file}" ] && redirect_data="$( < "${redirect_file}" )"
+
+revoke_file="${REVOKES}/${mac} ${ip}"
+[ -f "${revoke_file}" ] && revoke_id="$( < "${revoke_file}" )"
+
+redirect_data=${redirect_data:-unkown}
+redirect=${redirect_data%%/*}
+access_data=$( < "${session_file}" )
+access_data=( ${access_data//,/ } )
+login=${access_data[2]}
+grant=${access_data[3]}
+access_data=${access_data[*]}
+access_data=${access_data// /,}
+duration=$(( ${revoke} - ${grant} ))
+revoke_file="${REVOKES}/${mac} ${ip}"
+
+########################################################################
+
+# Variables disponibles pour les plugins:
+
+# ip, mac, user
+# grant => epoch debut de session
+# revoke => epoch fin de session
+# duration => duree de session
+# access_data => concatenation des informations de session (mac,ip,user,grant)
+# redirect_data => URL de redirection avant filtrage
+# redirect => URL de redirection apres filtrage
+# session_file => URI des informations de session
+# redirect_file => URI des informations de redirection
+# quota_search => date debut pour calcul quotas
+
+# Le module 'sql_get_quotas.sh' retourne:
+# sessions => nombre de sessions actives (a partir de la base SQL)
+# total_bytes_dl[3], total_bytes_up[3] => cumuls depuis 'quota_search'
+# max_sessions, max_bytes_up[3], max_bytes_up[3] => quotas
+
+# Le module 'session/stats_get.sh' retourne:
+
+# Stats trafic classe 0
+# data_dl[0], data_up[0]
+# pkts_dl[0], pkts_up[0]
+# bytes_dl[0], bytes_up[0]
+
+# Stats trafic classe 2
+# data_dl[2], data_up[2]
+# pkts_dl[2], pkts_up[2]
+# bytes_dl[2], bytes_up[2]
+
+# Stats trafic classe 3
+# data_dl[3], data_up[3]
+# pkts_dl[3], pkts_up[3]
+# bytes_dl[3], bytes_up[3]
+
+########################################################################
+
+for plugin in ${PRE_REVOKE} ; do
+	[ -f ${USPOT}/plugins/${plugin} ] && . ${USPOT}/plugins/${plugin}
+done
+
+########################################################################
+
+# Suppression de la regle d'acces
+#IPT -t mangle -D authenticated -m mac --mac-source ${mac} -s ${ip} -j MARK --set-xmark ${M1}/${M1} 2>/dev/null
+IPT -t mangle -D authenticated -m mac --mac-source ${mac} -j MARK --set-xmark ${M1}/${M1} 2>/dev/null
+
+# Suppression des regles de classification
+for i in 0 1 2 3 ; do
+#	IPT -t mangle -D overquota -m mac --mac-source ${mac} -s ${ip} -j MARK --set-xmark ${MARK[${i}]}/${MARK[${i}]} 2>/dev/null
+	IPT -t mangle -D overquota -m mac --mac-source ${mac} -j MARK --set-xmark ${MARK[${i}]}/${MARK[${i}]} 2>/dev/null
+done
+
+log "ACCESS REVOKED: ${access_data},${revoke},${duration}"
+
+########################################################################
+
+for plugin in ${POST_REVOKE} ; do
+	[ -f ${USPOT}/plugins/${plugin} ] && . ${USPOT}/plugins/${plugin}
+done
+
+########################################################################
+
+# Suppression du cache de session
+[ -f "${session_file}" ] && rm "${session_file}"
+
+# Suppression du cache de revocation
+[ -f "${revoke_file}" ] && rm "${revoke_file}"
+
+# Suppression du job de revocation
+[ -z ${revoke_id} ] || atrm ${revoke_id} 2>/dev/null
+
+########################################################################
+
+exit 0

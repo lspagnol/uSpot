@@ -1,0 +1,214 @@
+# Reseaux cote Wifi
+
+# Ce fichier est lu par le script:
+# => '/usr/local/uSpot/uSpot-config-interfaces'
+
+# Il permet de generer automatiquement:
+# - la configuration des interfaces cote Wifi
+# - la configuration du serveur DHCP
+
+# Les fichiers generes sont:
+# => '/etc/uSpot/interfaces'
+# => '/etc/uSpot/dhcpd'
+
+# Adresses passerelles allouees par DHCPD
+# "first" => premiere adresse de la plage
+# "last"  => derniere adresse de la plage
+DHCP_GW_ADDR="last"
+
+# Plages d'adresses alloues par DHCPD
+# Valeur a ajouter au debut de la plage
+DHCP_RANGE_FIRST="2"
+# Valeur a enlever a la fin de la plage
+DHCP_RANGE_LAST="5"
+
+# Format => tableau (incrementation a partir de zero)
+# 'WLAN_IF'   => interface cote Wifi
+# 'WLAN_ID'   => numero vlan
+# 'WLAN_ADDR' => adresse reseau
+# 'WLAN_MASK' => masque reseau
+# 'WLAN_DESC' => description reseau
+
+# Test
+i=0
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1297"
+WLAN_ADDR[${i}]="10.129.224.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Test"
+
+# Reims MDH
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1290"
+WLAN_ADDR[${i}]="10.129.0.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Reims MDH"
+
+# Reims Mediatheques old
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="63"
+WLAN_ADDR[${i}]="172.16.63.0"
+WLAN_MASK[${i}]="255.255.255.0"
+WLAN_DESC[${i}]="Reims Mediatheques old"
+
+# Reims Mediatheques
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1294"
+WLAN_ADDR[${i}]="10.129.128.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Reims Mediatheques"
+
+# Reims ESI
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1291"
+WLAN_ADDR[${i}]="10.129.32.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Reims ESI"
+
+# Reims ESPE
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1292"
+WLAN_ADDR[${i}]="10.129.64.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Reims ESPE"
+
+# Reims CROUS
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1293"
+WLAN_ADDR[${i}]="10.129.96.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Reims CROUS"
+
+# Reims Medecine
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1300"
+WLAN_ADDR[${i}]="10.130.0.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Reims Medecine"
+
+# Reims Dentaire
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1301"
+WLAN_ADDR[${i}]="10.130.32.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Reims Dentaire"
+
+# Reims INSERM
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1302"
+WLAN_ADDR[${i}]="10.130.64.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Reims INSERM"
+
+# Reims Croix-rouge
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1310"
+WLAN_ADDR[${i}]="10.131.0.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Reims Croix-rouge"
+
+# Reims Presidence
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1320"
+WLAN_ADDR[${i}]="10.132.0.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Reims Presidence"
+
+# Reims IUT
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1330"
+WLAN_ADDR[${i}]="10.133.0.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Reims IUT"
+
+# Charleville IFTS
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1350"
+WLAN_ADDR[${i}]="10.135.0.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Charleville IFTS"
+
+# Charleville IUT
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1351"
+WLAN_ADDR[${i}]="10.135.32.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Charleville IUT"
+
+# Charleville ESPE
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1352"
+WLAN_ADDR[${i}]="10.135.64.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Charleville ESPE"
+
+# Troyes IUT
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1360"
+WLAN_ADDR[${i}]="10.136.0.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Troyes IUT"
+
+# Troyes ESPE
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1361"
+WLAN_ADDR[${i}]="10.136.32.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Troyes ESPE"
+
+# Troyes CUT
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1362"
+WLAN_ADDR[${i}]="10.136.64.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Troyes CUT"
+
+# Troyes CROUS
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1363"
+WLAN_ADDR[${i}]="10.136.96.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Troyes CROUS"
+
+# Chalons IUT
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1370"
+WLAN_ADDR[${i}]="10.137.0.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Chalons IUT"
+
+# Chalons ESPE
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1371"
+WLAN_ADDR[${i}]="10.137.32.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Chalons ESPE"
+
+# Chaumont ESPE
+((i++))
+WLAN_IF[${i}]="eth1"
+WLAN_ID[${i}]="1380"
+WLAN_ADDR[${i}]="10.138.0.0"
+WLAN_MASK[${i}]="255.255.224.0"
+WLAN_DESC[${i}]="Chaumont ESPE"

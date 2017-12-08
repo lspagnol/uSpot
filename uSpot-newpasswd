@@ -1,0 +1,93 @@
+#!/bin/bash
+# uSpot-newpasswd
+# Renouvellement mot de passe de compte invite via Postfix
+
+########################################################################
+
+. /usr/local/uSpot/uSpot-functions
+
+########################################################################
+
+header=0
+subjok=0
+
+while [ "${header}" != "" ] ; do
+
+	# parcourir les entetes
+	# => recuperer l'adresse mail de l'expediteur
+	# => le champ "Subject" doit contenir "motdepasse"
+
+	read header
+
+	item=$(echo "${header}"	|cut -d: -f1)
+	value=$(echo "${header}" |cut -d: -f2-)
+
+	case ${item} in
+		Subject)
+			echo "${value}"\
+			 |tr -d "[:space:]"\
+			 |grep -qi "${MAIL_SUBJECT_VALIDATION}"
+			[ $? -eq 0 ] && subjok=1
+		;;
+		From)
+			mail=$(echo "${value}"\
+			 |sed -e 's/.*<//g ; s/>.*//g
+			  ; s/ //g')
+		;;
+	esac
+
+	# Traitement si adresse expediteur et champ "Subject" OK
+	if [ "${mail}" != "" ] && [ ${subjok} -eq 1 ] ; then
+
+		# recuperer l'id du compte
+		req="
+		 SELECT account_id
+		 FROM accounts
+		 WHERE account_login='${mail}'
+		;"
+		eval $(echo "${req}" |MYSQLGET)
+		if [ -z ${account_id} ] ; then # pas de compte pour cet identifiant
+			echo -e "${MAIL_NOACCOUNT_ERROR}"\
+			 |mail -a "content-type: text/html" -a "from: ${MAIL_FROM_PASSWD}" -a "reply-to: ${MAIL_REPLY}" -s "${MAIL_SUBJECT}" ${mail}
+			exit 0
+		fi
+
+		# verifier s'il existe au moins une session non expiree
+		req="
+		 SELECT s.session_id AS session_id
+		 FROM accounts a, sessions s
+		 WHERE a.account_login='${mail}'
+		 AND s.session_account_id = a.account_id
+		 AND s.session_enabled=TRUE
+		 AND unix_timestamp() <= s.session_end
+		 LIMIT 1
+		;"
+		eval $(echo "${req}" |MYSQLGET)
+		if [ -z ${session_id} ] ; then
+			echo -e "${MAIL_NOSESSION_ERROR}"\
+			 |mail -a "content-type: text/html" -a "from: ${MAIL_FROM_PASSWD}" -a "reply-to: ${MAIL_REPLY}" -s "${MAIL_SUBJECT}" ${mail}
+			exit 0
+		fi
+		
+		# generer un mdp
+		passwd=$(createpasswd)
+		passwd_crypt=$(cryptpasswd ${passwd})
+
+		# mettre a jour le mot de passe
+		req="
+		 UPDATE accounts
+		 SET account_passwd='${passwd_crypt}'
+		 WHERE account_login='${mail}'
+		;"
+		echo "${req}" |MYSQL
+
+		# envoyer un mail (template PASSWD)
+		cat ${MAIL_PASSWD_TPL}\
+		 |sed -e "s/##LOGIN##/${mail}/g ; s/##PASSWD##/${passwd}/g" \
+		 |mail -a "content-type: text/html" -a "from: ${MAIL_FROM_PASSWD}" -a "reply-to: ${MAIL_REPLY}" -s "${MAIL_SUBJECT}" ${mail}
+
+		exit
+
+	fi
+
+done

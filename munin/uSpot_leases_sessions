@@ -1,0 +1,27 @@
+#!/bin/bash
+#
+#%# family=contrib
+#%# capabilities=autoconf
+
+if [ "$1" = "config" ]; then
+cat<<EOF
+graph_title Current leases and sessions
+graph_vlabel Actives
+graph_scale no
+graph_category uSpot
+graph_info Current leases and sessions
+leases.label DHCP leases
+leases.info Number of leases
+leases.draw LINE1
+sessions.label uSpot sessions
+sessions.info Number of sessions
+sessions.draw LINE1
+EOF
+exit 0
+fi
+
+leases=$(sudo uSpot leases |wc -l)
+sessions=$(sudo uSpot sessions -k |wc -l)
+
+echo "leases.value ${leases}"
+echo "sessions.value ${sessions}"

@@ -1,0 +1,40 @@
+# Liste des plugins
+
+# Verifications pour autorisation ouverture de session
+check/enabled.sh
+check/quotas.sh
+check/sessions.sh
+check/time.sh
+check/user.sh
+
+# Retour HTML pour ouverture de session
+html/last_connexion.sh
+html/quotas.sh
+html/sessions.sh
+
+# Regles iptables
+iptables/stats_rules_add.sh
+iptables/stats_rules_del.sh
+
+# Divers
+misc/stats_syslog.sh
+
+# Base de donnees
+mysql/params_get.sh
+mysql/params_init.sh
+mysql/last_connexion_get.sh
+mysql/log_close.sh
+mysql/log_open.sh
+mysql/quotas_get.sh
+mysql/repair.sh
+mysql/stats_get.sh
+
+# Operations periodiques
+periodic/check_quotas.sh
+periodic/mysql_logs_upg.sh
+periodic/mysql/stats_get.sh
+
+# Variables de session
+session/quotas_fix.sh
+session/stats_get.sh
+session/stats_fix.sh

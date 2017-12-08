@@ -1,0 +1,41 @@
+#!/bin/bash
+#
+#%# family=contrib
+#%# capabilities=autoconf
+
+if [ "$1" = "config" ]; then
+cat<<EOF
+graph_title Leases and sessions rates
+graph_vlabel Events per minute
+graph_scale no
+graph_category uSpot
+graph_info Rates
+leases.label DHCP leases
+leases.info Number of leases
+leases.draw LINE1
+releases.label DHCP releases
+releases.info Number of releases
+releases.draw LINE1
+grants.label uSpot grants
+grants.info Number of grants
+grants.draw LINE1
+revokes.label uSpot revokes
+revokes.info Number of revokes
+revokes.draw LINE1
+EOF
+exit 0
+fi
+
+sudo logtail -f /var/log/dhcpd/dhcpd.log |egrep " dhcpd: (DHCPOFFER|RELEASE) on " > /tmp/dhcpd.log
+sudo logtail -f /var/log/uSpot/uSpot.log |egrep " uSpot: ACCESS (GRANTED|REVOKED): " > /tmp/uSpot.log
+
+leases=$(( $(grep -c " dhcpd: DHCPOFFER on " /tmp/dhcpd.log) / 5 ))
+releases=$(( $(grep -c " dhcpd: RELEASE on " /tmp/dhcpd.log) / 5 ))
+
+grants=$(( $(grep -c " uSpot: ACCESS GRANTED: " /tmp/uSpot.log) / 5 )) 
+revokes=$(( $(grep -c " uSpot: ACCESS REVOKED: " /tmp/uSpot.log) / 5 ))
+
+echo "leases.value ${leases}"
+echo "releases.value ${releases}"
+echo "grants.value ${grants}"
+echo "revokes.value ${revokes}"

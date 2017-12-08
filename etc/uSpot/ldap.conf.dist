@@ -1,0 +1,13 @@
+#!/bin/bash
+# ldap.conf.conf
+
+# Ce fichier DEVRAIT avoir les droits root:root 600
+
+########################################################################
+
+# Configuration LDAP
+
+LDAP_HOST=""
+LDAP_OPTS="-x"
+
+########################################################################

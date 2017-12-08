@@ -1,0 +1,36 @@
+#!/bin/bash
+# uSpot_${HOSTNAME}.conf
+# Fichier de configuration
+
+# Si on dispose de plusieurs portails captifs, la configuration peut
+# etre surchargee localement via '/etc/uSpot/uSpot_${HOSTNAME}.conf',
+# ===> 'HOSTNAME' correspondant au nom court du serveur <===
+# Les variables concernees sont le plus souvent: 'IF_LAN', 'IF_WLAN',
+# 'PORTAL' et 'SLAVES'.
+
+########################################################################
+# Section LOCALE
+########################################################################
+
+# Adresse portail captif cote LAN
+# => si renseigne, le noeud sera implicitement en mode portail
+PORTAL="10.220.4.101"
+
+# Declaration des noeuds esclaves:
+# => si renseigne, le noeud sera implicitement en mode gestion
+# Separateur => virgule
+#SLAVES="eduspot-rs"
+
+# Interface cote LAN
+# Format => 'interface[.vlan]'
+# Separateur => virgule
+IF_LAN="eth0"
+
+# Interface(s) cote WLAN
+# Format => 'interface[.vlan]'
+# Separateur => virgule
+IF_WLAN="eth1.1297"
+
+########################################################################
+# Section GLOBALE
+########################################################################

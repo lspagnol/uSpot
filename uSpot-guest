@@ -1,0 +1,487 @@
+#!/bin/bash
+# uSpot-guest
+# Gestion des comptes invites
+
+########################################################################
+
+. /usr/local/uSpot/uSpot-functions
+
+########################################################################
+# Aide
+
+if [ -z ${1} ] || [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage: uSpot-guest add <login> [args]
+                   newpasswd <login>
+                   del|enable|disable <session_id>
+                   mod <session_id> [args]
+                   show [args]
+
+Args: -date <date>
+      -passwd <password> (facultative)
+      -proposer <proposer> (facultative)
+      -comment "<comment>" (facultative)
+
+Args for:
+add:  ALL
+mod:  date
+show: login,proposer,comment
+
+Date format: J/M/AAAA or JJ/MM/AAAA
+             J/M/AAAA          => this date
+             J/M/AAAA-         => from this date
+            -J/M/AAAA          => from today to this date
+             J/M/AAAA-J/M/AAAA => between theses two dates
+
+Output for 'add':
+<login> <password>
+
+EOF
+exit 0
+fi
+
+########################################################################
+# Determiner action
+
+case $1 in
+	add|newpasswd)
+		cmd=${1}
+		shift
+		if [ -z ${1} ] ; then
+			echo "ERROR: 'login' is required"
+			exit 1
+		fi
+		login=${1}
+		shift
+	;;
+	show)
+		cmd=${1}
+		shift
+		if [ "$(echo ${1} |grep "^-")" = "" ] ; then
+			login=${1}
+			shift
+		fi
+	;;
+	del|mod|enable|disable|newpasswd)
+		cmd=${1}
+		shift
+		if [ -z ${1} ] ; then
+			echo "ERROR: 'id' is required"
+			exit 1
+		fi
+		id=${1}
+		shift
+	;;
+	*)
+		echo "ERROR: <action> is required"
+		exit 1
+	;;
+esac
+
+########################################################################
+# Lecture des arguments
+
+while [ $? -eq 0 ] ; do
+	case ${1} in
+		-date)
+			begin=${2%-*}
+			if [ ! -z ${begin} ] ; then
+				begin="$(echo ${begin} |cut -d/ -f2)/$(echo ${begin} |cut -d/ -f1)/$(echo ${begin} |cut -d/ -f3)"
+			fi
+			end=${2#*-}
+			if [ ! -z ${end} ] ; then
+				end="$(echo ${end} |cut -d/ -f2)/$(echo ${end} |cut -d/ -f1)/$(echo ${end} |cut -d/ -f3)"
+			fi
+		;;
+		-comment)
+			comment="${2}"
+		;;
+		-passwd)
+			passwd="${2}"
+		;;
+		-proposer)
+			proposer="${2}"
+		;;
+	esac
+	shift ; shift
+done
+
+########################################################################
+# Calcul dates de debut et dates de fin
+
+case ${cmd} in
+
+	add)
+		if [ -z ${begin} ] ; then # pas de date de debut => aujourd'hui
+			begin=$(date -d "today" +%m/%d/%Y)
+		fi
+		if [ -z ${end} ] ; then # pas de date => utiliser date debut
+			end=${begin}
+		fi
+	;;
+
+	mod)
+		if [ -z ${begin} ] ; then
+			req="SELECT account_begin FROM accounts WHERE account_id='${id}';"
+			eval $(echo "${req}" |MYSQLGET)
+			_begin=${account_begin}
+		fi
+		if [ -z ${end} ] ; then
+			req="SELECT account_end FROM accounts WHERE account_id='${id}';"
+		    eval $(echo "${req}" |MYSQLGET)
+			_end=${account_end}
+		fi
+	;;
+
+esac
+
+########################################################################
+# Ajustement et verification des dates
+
+case ${cmd} in
+
+	add|mod)
+
+		now=$(date -d "today" +%m/%d/%Y)
+		_now=$(date -d "${now} + ${DFH} hours" +%s 2>/dev/null)
+
+		if [ -z ${_begin} ] ; then # ajouter heure debut journee
+			_begin=$(date -d "${begin} + ${DFH} hours" +%s 2>/dev/null)
+			if [ $? -ne 0 ] ; then
+				echo "ERROR: invalid begin date"
+				exit 1
+			fi
+		fi
+
+		if [ -z ${_end} ] ; then # ajouter heure fin journee
+			_end=$(date -d "${end} + ${DLH} hours" +%s 2>/dev/null)
+			if [ $? -ne 0 ] ; then
+				echo "ERROR: invalid end date"
+				exit 1
+			fi
+		fi
+
+		if [ ${_begin} -lt ${_now} ] ; then
+			echo "ERROR: begin date is earlier than today"
+			exit 1
+		fi
+
+		if [ ${_begin} -gt ${_end} ] ; then
+			echo "ERROR: end date is earlier than begin date"
+			exit 1
+		fi
+
+		# verifier validite maximale de la periode
+		if [ ! -z ${GMD} ] ; then
+			range=$(( ${_end} - ${_begin} ))
+			if [ ${range} -gt ${GMD} ] ; then
+				echo "ERROR: date range is too large"
+				exit 1
+			fi
+		fi
+
+		# verifier date maximale de fin de periode
+		if [ ! -z ${YLD} ] && [ $(date +%m%d) -lt ${YFD} ] ; then
+			if [ $(date -d @${_end} +%m%d) -gt ${YLD} ] ; then
+				echo "ERROR: end date is too far"
+				exit 1
+			fi
+		fi
+
+		# formater dates pour le message expedie par mail
+		_begin_="$(date -d @${_begin} '+%d\/%m\/%Y %Hh%M')"
+		_end_="$(date -d @${_end} '+%d\/%m\/%Y %Hh%M')"
+
+	;;
+
+esac
+
+########################################################################
+# Determiner les adresses mail a utiliser
+
+# compte NOMINATIF:
+# destination (mail) => invite
+# expediteur (mail_from) => parain
+
+# compte GENERIQUE:
+# destination (mail) => parain
+# expediteur (mail_from) => adresse expediteur par defaut (MAIL_FROM)
+
+case ${cmd} in
+
+	add|newpasswd)
+
+		# pas de parrain => utiliser 'USER' ou 'SUDO_USER'
+		if [ -z ${proposer} ] ; then
+			if [ -z ${SUDO_USER} ] ; then
+				proposer=${USER}
+			else
+				proposer=${SUDO_USER}
+			fi
+		fi
+		
+		echo ${login} |grep -q "@"
+		if [ $? -eq 0 ] ; then # c'est un compte nominatif
+		
+			# destination = adresse mail du compte invite
+			mail=${login}
+		
+			# expediteur = demandeur 
+			# (pour eventuelle reception de notification de non-remise)
+			if [ -f ${CONF}/ldap.conf ] ; then
+				. ${CONF}/ldap.conf
+				mail_from=$(get_ldap_mail ${proposer})
+			fi
+		
+		else # c'est un compte generique
+		
+			echo ${proposer} |grep -q "@"
+			if [ $? -eq 0 ] ; then # le proposer est une adresse mail
+		
+				# destination: utiliser cette adresse
+				mail=${proposer}
+		
+			else
+		
+				# recuperer l'adresse mail du demandeur
+				if [ -f ${CONF}/ldap.conf ] ; then
+					. ${CONF}/ldap.conf
+					mail=$(get_ldap_mail ${proposer})
+				fi
+		
+				# sinon ajouter domaine a l'identifiant du demandeur
+				mail=${mail-${proposer}@${MAIL_DOMAIN}}
+		
+			fi
+		
+		fi
+		
+		# si l'adresse d'expediteur est vide, utiliser celle par defaut
+		mail_from=${mail_from-${MAIL_FROM}}
+
+	;;
+
+esac
+
+########################################################################
+# Actions
+
+case ${cmd} in
+
+	newpasswd)
+
+		# recuperer l'id du compte
+		req="
+		 SELECT account_id
+		 FROM accounts
+		 WHERE account_login='${login}'
+		;"
+		eval $(echo "${req}" |MYSQLGET)
+
+		if [ -z ${account_id} ] ; then # pas de compte pour cet identifiant
+
+			echo "ERROR: no account for user '${login}'"
+			exit 1
+
+		fi
+
+		# verifier s'il existe au moins une session non expiree
+		req="
+		 SELECT s.session_id AS session_id
+         FROM accounts a, sessions s
+		 WHERE a.account_login='${login}'
+		 AND s.session_account_id = a.account_id
+		 AND s.session_enabled=TRUE
+         AND unix_timestamp() <= s.session_end
+         LIMIT 1
+        ;"
+		eval $(echo "${req}" |MYSQLGET)
+		
+		if [ -z ${session_id} ] ; then
+
+			echo "ERROR: no available session for user '${login}'"
+			exit 1
+
+		fi
+
+		# generer un mdp et sa version SHA1
+		passwd=$(createpasswd)
+		passwd_crypt=$(cryptpasswd ${passwd})
+
+		# mettre a jour le mot de passe
+		req="
+		 UPDATE accounts
+		 SET account_passwd='${passwd_crypt}'
+		 WHERE account_login='${login}'
+		;"
+		echo "${req}" |MYSQL
+
+		mail_from=${MAIL_FROM_PASSWD}
+
+		# envoyer un mail (template PASSWD)
+		cat ${MAIL_PASSWD_TPL}\
+		 |sed -e "s/##LOGIN##/${login}/g ; s/##PASSWD##/${passwd}/g" \
+		 |mail -a "content-type: text/html" -a "from: ${mail_from}" -a "reply-to: ${MAIL_REPLY}" -s "${MAIL_SUBJECT}" ${mail}
+
+		# afficher le mot de passe
+		echo "${passwd}"
+
+	;;
+
+	add)
+
+		# verifier si le compte existe
+		req="
+		 SELECT account_id
+		 FROM accounts
+		 WHERE account_login='${login}'
+		;"
+		eval $(echo "${req}" |MYSQLGET)
+
+		if [ -z ${account_id} ] ; then # pas de compte pour cet identifiant
+
+			# generer un mdp et sa version SHA1
+			passwd=$(createpasswd)
+			passwd_crypt=$(cryptpasswd ${passwd})
+
+			echo ${login} |grep -q "@"
+			if [ $? -eq 0 ] ; then # c'est un compte nominatif
+				req="
+				 INSERT INTO accounts
+				  (account_login,account_passwd)
+				 VALUES
+				  ('${login}','${passwd_crypt}')
+				;"
+			else # c'est un compte generique
+				req="
+				 INSERT INTO accounts
+				  (account_login,account_passwd,account_owner)
+				 VALUES
+				  ('${login}','${passwd_crypt}','${proposer}')
+				;"
+			fi
+
+			# creer le compte
+			echo "${req}" |MYSQL
+
+			# recuperer l'id du compte
+			req="
+			 SELECT account_id
+			 FROM accounts
+			 WHERE account_login='${login}'
+			;"
+			eval $(echo "${req}" |MYSQLGET)
+
+			# envoyer un mail (template ACCOUNT)
+			cat ${MAIL_ACCOUNT_TPL}\
+			 |sed -e "s/##LOGIN##/${login}/g ; s/##PASSWD##/${passwd}/g" \
+			 |mail -a "content-type: text/html" -a "from: ${mail_from}" -a "reply-to: ${MAIL_REPLY}" -s "${MAIL_SUBJECT}" ${mail}
+
+		fi
+
+		# creer la session
+		req="
+		 INSERT INTO sessions
+		  (session_account_id,session_proposer,session_begin,session_end,session_comment)
+		 VALUES
+		  ('${account_id}','${proposer}','${_begin}','${_end}','${comment}')
+		;"
+		echo "${req}" |MYSQL
+
+		# envoyer un mail (template SESSION)
+		cat ${MAIL_SESSION_TPL}\
+		 |sed -e "s/##BEGIN##/${_begin_}/g ; s/##END##/${_end_}/g ; s/##MAIL_FROM_PASSWD##/${MAIL_FROM_PASSWD}/g"\
+		 |mail -a "content-type: text/html" -a "from: ${mail_from}" -a "reply-to: ${MAIL_REPLY}" -s "${MAIL_SUBJECT}" ${mail}
+
+		# ajustement des quotas
+
+		echo ${login} |grep -q "@"
+		if [ $? -eq 0 ] ; then # compte nominatif
+
+			[ -z ${GUEST_N_MAX_SESSIONS} ] || ${USPOT}/uSpot-quotas set ${login} sessions ${GUEST_N_MAX_SESSIONS}
+			[ -z ${GUEST_N_MAX_DURATION} ] || ${USPOT}/uSpot-quotas set ${login} duration ${GUEST_N_MAX_DURATION}
+			[ -z ${GUEST_N_MAX_TIME} ] || ${USPOT}/uSpot-quotas set ${login} time ${GUEST_N_MAX_TIME}
+			[ -z ${GUEST_N_MAX_BYTES_CLASS[0]} ] || ${USPOT}/uSpot-quotas set ${login} class0 ${GUEST_N_MAX_BYTES_CLASS[0]}
+			[ -z ${GUEST_N_MAX_BYTES_CLASS[1]} ] || ${USPOT}/uSpot-quotas set ${login} class1 ${GUEST_N_MAX_BYTES_CLASS[1]}
+			[ -z ${GUEST_N_MAX_BYTES_CLASS[2]} ] || ${USPOT}/uSpot-quotas set ${login} class2 ${GUEST_N_MAX_BYTES_CLASS[2]}
+			[ -z ${GUEST_N_MAX_BYTES_CLASS[3]} ] || ${USPOT}/uSpot-quotas set ${login} class3 ${GUEST_N_MAX_BYTES_CLASS[3]}
+
+		else # compte generique/groupe
+
+			[ -z ${GUEST_G_MAX_SESSIONS} ] || ${USPOT}/uSpot-quotas set ${login} sessions ${GUEST_G_MAX_SESSIONS}
+			[ -z ${GUEST_G_MAX_DURATION} ] || ${USPOT}/uSpot-quotas set ${login} duration ${GUEST_G_MAX_DURATION}
+			[ -z ${GUEST_G_MAX_TIME} ] || ${USPOT}/uSpot-quotas set ${login} time ${GUEST_G_MAX_TIME}
+			[ -z ${GUEST_G_MAX_BYTES_CLASS[0]} ] || ${USPOT}/uSpot-quotas set ${login} class0 ${GUEST_G_MAX_BYTES_CLASS[0]}
+			[ -z ${GUEST_G_MAX_BYTES_CLASS[1]} ] || ${USPOT}/uSpot-quotas set ${login} class1 ${GUEST_G_MAX_BYTES_CLASS[1]}
+			[ -z ${GUEST_G_MAX_BYTES_CLASS[2]} ] || ${USPOT}/uSpot-quotas set ${login} class2 ${GUEST_G_MAX_BYTES_CLASS[2]}
+			[ -z ${GUEST_G_MAX_BYTES_CLASS[3]} ] || ${USPOT}/uSpot-quotas set ${login} class3 ${GUEST_G_MAX_BYTES_CLASS[3]}
+
+		fi
+
+	;;
+
+	del)
+		req="
+		 DELETE from sessions
+		 WHERE
+		  session_id='${id}'
+		;"
+		echo "${req}" |MYSQL
+	;;
+
+	enable)
+		req="
+		 UPDATE sessions
+		 SET
+		  session_enabled=TRUE
+		 WHERE
+		  session_id='${id}'
+		;"
+		echo "${req}" |MYSQL
+	;;
+
+	disable)
+		req="
+		 UPDATE sessions
+		 SET
+		  session_enabled=FALSE
+		 WHERE
+		  session_id='${id}'
+		;"
+		echo "${req}" |MYSQL
+	;;
+
+	mod)
+		req="
+		 UPDATE sessions
+		 SET
+		  session_begin='${_begin}',
+		  session_end='${_end}'
+		 WHERE
+		  session_id='${id}';"
+		echo "${req}" |MYSQL
+	;;
+
+	show)
+		[ -z ${login} ] || filter=" AND a.account_login='${login}'"
+		[ -z ${proposer} ] || filter="${filter} AND s.session_proposer='${proposer}'"
+		[ -z ${comment} ] || filter="${filter} AND s.session_comment LIKE '%${comment}%'"
+		req="
+		 SELECT
+		  s.session_id AS id,
+		  a.account_login AS login,
+		  s.session_proposer AS proposer,
+		  DATE_FORMAT(FROM_UNIXTIME(s.session_begin),\"%d/%m/%Y\") AS begin,
+		  DATE_FORMAT(FROM_UNIXTIME(s.session_end),\"%d/%m/%Y\") AS end,
+		  s.session_enabled AS enabled,
+		  s.session_comment AS comment
+		 FROM accounts a, sessions s
+		 WHERE
+		  a.account_id=s.session_account_id AND
+		  unix_timestamp() <= s.session_end ${filter}
+		 ORDER by s.session_id
+		;"
+		echo "${req}" |MYSQL --table
+	;;
+
+esac

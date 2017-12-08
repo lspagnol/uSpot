@@ -1,0 +1,36 @@
+authoritative;
+log-facility local7;
+db-time-format local;
+
+ddns-updates off;
+ddns-update-style none;
+get-lease-hostnames off;
+
+# Bail => 5 minutes
+default-lease-time 300;
+max-lease-time 300;
+
+################################################################################################
+
+option domain-name "univ-reims.fr";
+option domain-name-servers 193.50.208.4,194.57.104.104;
+option ntp-servers 10.220.4.101;
+
+################################################################################################
+# Revocation des acces au portail via DHCPD
+
+on commit {
+        set ClientIP = binary-to-ascii(10, 8, ".", leased-address);
+        set ClientMac = binary-to-ascii(16, 8, ":", substring(hardware, 1, 6));
+        # Attention au format de l'adresse MAC utilise par DHCPD:
+        # "0x:aa:0y:bb:cc:0z" => "x:aa:y:bb:cc:z"
+        on release or expiry {
+                log(concat("RELEASE on ", ClientIP, " to ", ClientMac));
+                execute("/usr/bin/sudo","/usr/local/uSpot/uSpot-revoke",ClientMac,ClientIP,"&");
+        }
+}
+
+################################################################################################
+# Reseaux de collecte Wifi
+
+include "/etc/uSpot/dhcpd";

@@ -1,0 +1,1478 @@
+#!/bin/bash
+# uSpot-functions
+# Librairie uSpot
+
+########################################################################
+
+CONF="/etc/uSpot"
+
+[ -f ${CONF}/uSpot.conf ] || { echo "Fichier de configuration manquant" ; exit 1 ; }
+
+# Configuration generale
+. ${CONF}/uSpot.conf
+
+# Configuration MySQL
+[ -r ${CONF}/mysql.conf ] && . ${CONF}/mysql.conf
+
+# Surcharger la configuration generale avec une configuration locale
+[ -f ${CONF}/uSpot_${HOSTNAME}.conf ] && . ${CONF}/uSpot_${HOSTNAME}.conf
+
+# Charger la configuration des reseaux Wifi
+[ -f ${CONF}/networks.conf ] && . ${CONF}/networks.conf
+
+########################################################################
+
+function setvars { # Initialiser variables
+
+local i
+
+umask 0002
+
+EPOCH=$(date +%s)
+QUOTA_SEARCH=$(date -d "${QUOTAS_PERIOD}" +%s)
+
+# Calcul correction horaire (prise en compte changement d'heure)
+TIME_OFSET=$(( $(date -u +%k) - $(date +%k) ))
+
+if [ ! -z ${GMD} ] ; then # convertir jours en secondes
+	GMD=$(( ${GMD} * 3600 * 24 ))
+fi
+
+if [ ! -z ${YFD} ] ; then # convertir JJ/MM => MMJJ
+	YFD=(${YFD//\// })
+	YFD="${YFD[1]}${YFD[0]}"
+fi
+
+if [ ! -z ${YLD} ] ; then # convertir JJ/MM => MMJJ
+	YLD=(${YLD//\// })
+	YLD="${YLD[1]}${YLD[0]}"
+fi
+
+IF_LAN="${IF_LAN//,/ }"
+IF_WLAN="${IF_WLAN//,/ }"
+LAN_WHITELIST="${LAN_WHITELIST//,/ }"
+WAN_WHITELIST="${WAN_WHITELIST//,/ }"
+PRT_WHITELIST="${PRT_WHITELIST//,/ }"
+LAN_GREYLIST="${LAN_GREYLIST//,/ }"
+WAN_GREYLIST="${WAN_GREYLIST//,/ }"
+WAN_WHITELIST_FILE="/tmp/${WAN_WHITELIST_URL##*/}"
+PRE_GRANT="${PRE_GRANT//,/ }"
+POST_GRANT="${POST_GRANT//,/ }"
+PRE_REVOKE="${PRE_REVOKE//,/ }"
+POST_REVOKE="${POST_REVOKE//,/ }"
+SLAVES="${SLAVES//,/ }"
+KERNEL_TUNING="${KERNEL_TUNING//,/ }"
+
+case ${DEFAULT_UNIT} in
+	b|B) DEFAULT_DIV="1";;
+	kb|KB) DEFAULT_DIV="1024";;
+	mb|MB) DEFAULT_DIV="1048576";;
+	gb|GB) DEFAULT_DIV="1073741824";;
+	*) { echo "ERROR: bad unit '${DEFAULT_UNIT}'" ; exit 1 ; };;
+esac
+
+for i in 0 1 2 3 ; do
+	MAX_BYTES_CLASS[${i}]=$(( ${MAX_BYTES_CLASS[${i}]} * ${DEFAULT_DIV} ))
+done
+
+# Marquage des paquets dans Netfilter (NE PAS MODIFIER)
+M1=1			# auth OK
+M2=2			# services en listes blanches (bypass quotas)
+M3=4			# reseaux internes (avec quotas)
+M4=8			# reseaux partenaires (avec quotas)
+M5=16			# periodes creuses
+M6=32			# adresses MAC en liste noire
+MARK[0]=64		# overquota classe 0
+MARK[1]=128		# overquota classe 1
+MARK[2]=256		# overquota classe 2
+MARK[3]=512		# overquota classe 3
+
+}
+
+function begin { # Preparation repertoires, et conf PHP
+
+# Creation des repertoires
+mkdir -p ${SESSIONS}
+mkdir -p ${REDIRECTS}
+mkdir -p ${OVERQUOTAS}
+mkdir -p ${REVOKES}
+chown -R www-data:www-data ${REDIRECTS}
+
+flush_atjobs
+
+# (Re)generer le fichier de conf PHP
+cat<<EOF > ${CONF}/conf.php
+<?php
+\$SESSIONS="${SESSIONS}";
+\$REDIRECTS="${REDIRECTS}";
+\$REDIRECT_TIMEWAIT="${REDIRECT_TIMEWAIT}";
+\$ACCESS_DENIED_URL="${ACCESS_DENIED_URL}";
+?>
+EOF
+
+}
+
+function end { # Vider les caches
+
+flush_atjobs
+
+rm ${SESSIONS}/* 2>/dev/null
+rm ${REDIRECTS}/* 2>/dev/null
+rm ${OVERQUOTAS}/* 2>/dev/null
+rm ${REVOKES}/* 2>/dev/null
+
+}
+
+function flush_atjobs { # Purger les demandes de revocation planifiees
+
+local job
+local jobs=$(grep -l "${USPOT}/uSpot-revoke" /var/spool/cron/atjobs/* 2>/dev/null)
+
+for job in ${jobs} ; do
+	rm ${job}
+done
+
+}
+
+########################################################################
+
+function ssh_available { # Tester si un noeud est accessible via SSH
+
+fping -q -c 1 -t 100 ${1} 2>/dev/null >/dev/null
+
+if [ $? -eq 0 ] ; then # Ping OK
+	ssh -o "NumberOfPasswordPrompts 0" -o "StrictHostKeyChecking yes" ${1} true 2>/dev/null
+	if [ $? -eq 0 ] ; then
+		return 0 # SSH OK
+	else
+		return 1 # Echec SSH
+	fi
+else
+	return 1 # Echec ping
+fi
+
+}
+
+########################################################################
+
+function start { # Demarrage du portail
+
+# Demarrer le spooler de commandes iptables
+tsp 2>/dev/null >/dev/null
+
+for plugin in ${PRE_START} ; do
+	[ -f ${USPOT}/plugins/${plugin} ] && . ${USPOT}/plugins/${plugin}
+done
+
+begin
+rules install
+macblacklist load
+prtwhitelist load
+lanwhitelist load
+wanwhitelist load
+langreylist load
+wangreylist load
+offpeak load
+
+for plugin in ${POST_START} ; do
+	[ -f ${USPOT}/plugins/${plugin} ] && . ${USPOT}/plugins/${plugin}
+done
+
+tune_kernel
+enable
+
+}
+
+function stop { # Arret du portail
+
+disable
+
+for plugin in ${PRE_STOP} ; do
+	[ -f ${USPOT}/plugins/${plugin} ] && . ${USPOT}/plugins/${plugin}
+done
+
+rules destroy
+end
+
+for plugin in ${POST_STOP} ; do
+	[ -f ${USPOT}/plugins/${plugin} ] && . ${USPOT}/plugins/${plugin}
+done
+
+# Attendre la fin de l'execution  de la file d'attente du spooler
+# de commandes iptables et arreter le spooler
+tsp -w 2>/dev/null >/dev/null
+tsp -K 2>/dev/null >/dev/null
+
+}
+
+function reload { # Rechargement des regles
+
+disable
+
+local chain
+for chain in macblacklist prtwhitelist lanwhitelist wanwhitelist langreylist wangreylist offpeak ; do
+	${chain} flush
+	${chain} load
+done
+
+for plugin in ${RELOAD} ; do
+	[ -f ${USPOT}/plugins/${plugin} ] && . ${USPOT}/plugins/${plugin}
+done
+
+enable
+
+}
+
+########################################################################
+
+function enabled { # Tester l'etat du portail
+
+[ "$(</proc/sys/net/ipv4/ip_forward)" = "1" ] && return 0 || return 1
+
+}
+
+function enable { # Activer le portail
+
+echo "1" > /proc/sys/net/ipv4/ip_forward
+
+}
+
+function disable { # Desactiver portail
+
+echo "0" > /proc/sys/net/ipv4/ip_forward
+
+}
+
+function tune_kernel { # Tuning Kernel
+
+local p
+
+for p in ${KERNEL_TUNING} ; do
+
+	$SYSCTL ${p} >/dev/null
+
+done
+
+}
+
+########################################################################
+
+function rules { # Arguments attendus => install|destroy
+
+case $1 in
+
+	install)
+
+		rules_install
+
+	;;
+
+	destroy)
+
+		rules_destroy
+
+	;;
+
+	*)
+
+		echo "Usage: rules install|destroy"
+
+	;;
+
+esac
+}
+
+function rules_install { # Installer les regles
+
+local i iflan ifwlan dest d d0 d1 d2 h m
+
+IPT -P INPUT ACCEPT
+IPT -P FORWARD ACCEPT
+IPT -P OUTPUT ACCEPT
+
+# PREROUTING: tri et marquage des paquets entrants => LAN et WLAN (mangle)
+
+	# Pas de marquage pour le trafic LAN => portail
+	for iflan in ${IF_LAN} ; do
+		IPT -t mangle -A PREROUTING -i ${iflan} -j ACCEPT
+	done
+
+	# Le trafic en provenance du WLAN est envoye dans la chaine "wireless"
+	IPT -t mangle -N wireless
+	for ifwlan in ${IF_WLAN} ; do
+		IPT -t mangle -A PREROUTING -i ${ifwlan} -j wireless
+	done
+
+	# "lanwhitelist" => services LAN en liste blanche (pas de quotas)
+	# (CAS, IDP, Bureau Virtuel, Webmail, ...) => pas de quotas
+	IPT -t mangle -N lanwhitelist
+	IPT -t mangle -A wireless -j lanwhitelist
+	# La chaine est remplie par la fonction "lanwhitelist load"
+
+	# "wanwhitelist" => services WAN en liste blanche (pas de quotas)
+	# (portails d'authentification de la federation EduSpot)
+	IPT -t mangle -N wanwhitelist
+	IPT -t mangle -A wireless -j wanwhitelist
+	# La chaine est remplie par la fonction "wanwhitelist load"
+
+	# "authenticated" => authentification OK
+	IPT -t mangle -N authenticated
+	IPT -t mangle -A wireless -j authenticated
+	# La chaine est mise à jour par les scripts "uSpot-grant" et "uSpot-revoke"
+
+	# "macblacklist" => adresses MAC en liste noire
+	IPT -t mangle -N macblacklist
+	IPT -t mangle -A wireless -j macblacklist
+	# La chaine est remplie par la fonction "macblacklist update"
+
+	# "langreylist" => services LAN avec quotas
+	IPT -t mangle -N langreylist
+	IPT -t mangle -A wireless -j langreylist
+
+	# "wangreylist" => services WAN avec quotas
+	IPT -t mangle -N wangreylist
+	IPT -t mangle -A wireless -j wangreylist
+
+	# "offpeak" => trafic periodes creuses
+	IPT -t mangle -N offpeak
+	IPT -t mangle -A wireless -j offpeak
+
+	# "quotas" => trafic en depassement de quotas
+	IPT -t mangle -N overquota
+	IPT -t mangle -A wireless -j overquota
+	# La chaine est mise à jour par les scripts "uSpot-grant" et "uSpot-revoke"
+
+	# "TESTS" => chaine pour tests
+	IPT -t mangle -N TESTS
+	IPT -t mangle -A wireless -j TESTS
+
+# PREROUTING: redirection des acces HTTP => WLAN (nat)
+
+	# Le trafic en provenance du WLAN est envoye dans la chaine "wireless"
+	IPT -t nat -N wireless
+	for ifwlan in ${IF_WLAN} ; do
+		IPT -t nat -A PREROUTING -i ${ifwlan} -j wireless
+	done
+
+	# Rediriger adresses MAC en liste noire
+	IPT -t nat -A wireless -m mark --mark ${M6}/${M6} -p tcp --dport 80 -j DNAT --to-destination ${PORTAL}:${REDIRECT_PORT_BLACKLIST}
+
+	# Accepter destinations en liste blanche (lanwhitelist + wanwhitelist)
+	IPT -t nat -A wireless -m mark --mark ${M2}/${M2} -j ACCEPT
+
+	# Rediriger acces non authentifies
+	IPT -t nat -A wireless -m mark ! --mark ${M1}/${M1} -p tcp --dport 80 -j DNAT --to-destination ${PORTAL}:${REDIRECT_PORT_UNAUTH}
+
+	# Rediriger les acces au portail principal vers le portail local (info / deconnexion)
+	IPT -t nat -A wireless -p tcp --dport 80 -d ${PORTAL_MAIN} -j DNAT --to-destination ${PORTAL}:${REDIRECT_PORT_AUTH}
+
+	# Accepter le trafic authentifie sans overquota
+	IPT -t nat -A wireless -m mark --mark ${M1} -j ACCEPT
+
+	# Rediriger acces en overquota
+	for i in 3 2 1 0 ; do
+		IPT -t nat -N overquota${i}
+	done
+	IPT -t nat -A wireless -m mark --mark ${MARK[3]}/${MARK[3]} -m mark ! --mark ${MARK[2]}/${MARK[2]} -m mark ! --mark ${MARK[1]}/${MARK[1]} -m mark ! --mark ${MARK[0]}/${MARK[0]} -j overquota3	
+	IPT -t nat -A wireless -m mark --mark ${MARK[2]}/${MARK[2]} -m mark ! --mark ${MARK[1]}/${MARK[1]} -m mark ! --mark ${MARK[0]}/${MARK[0]} -j overquota2
+	IPT -t nat -A wireless -m mark --mark ${MARK[1]}/${MARK[1]} -m mark ! --mark ${MARK[0]}/${MARK[0]} -j overquota1
+	IPT -t nat -A wireless -m mark --mark ${MARK[0]}/${MARK[0]} -j overquota0
+
+	# Overquota CLASSE 3
+
+		# Ignorer les reseaux internes
+		IPT -t nat -A overquota3 -m mark --mark ${M3}/${M3} -j ACCEPT
+
+		# Ignorer les reseaux partenaires
+		IPT -t nat -A overquota3 -m mark --mark ${M4}/${M4} -j ACCEPT
+		
+		# Ignorer le trafic periodes creuses
+		IPT -t nat -A overquota3 -m mark --mark ${M5}/${M5} -j ACCEPT
+		
+		# Rediriger le reste
+		IPT -t nat -A overquota3 -p tcp --dport 80 -j DNAT --to-destination ${PORTAL}:${REDIRECT_PORT_OVERQUOTA3}
+
+	# Overquota CLASSE 2
+
+		# Ignorer les reseaux internes
+		IPT -t nat -A overquota2 -m mark --mark ${M3}/${M3} -j ACCEPT
+		
+		# Ignorer les reseaux partenaires
+		IPT -t nat -A overquota2 -m mark --mark ${M4}/${M4} -j ACCEPT
+		
+		# Rediriger le reste
+		IPT -t nat -A overquota2 -p tcp --dport 80 -j DNAT --to-destination ${PORTAL}:${REDIRECT_PORT_OVERQUOTA2}
+
+	# Overquota CLASSE 1
+
+		# Ignorer les reseaux internes
+		IPT -t nat -A overquota1 -m mark --mark ${M3}/${M3} -j ACCEPT
+		
+		# Rediriger le reste
+		IPT -t nat -A overquota1 -p tcp --dport 80 -j DNAT --to-destination ${PORTAL}:${REDIRECT_PORT_OVERQUOTA1}
+
+	# Overquota CLASSE 0
+
+		# Tout rediriger sur le portail
+		IPT -t nat -A overquota0 -p tcp --dport 80 -j DNAT --to-destination ${PORTAL}:${REDIRECT_PORT_OVERQUOTA0}
+
+# FORWARD: filtrage des access WLAN => WAN (filter)
+
+	# Le trafic en provenance du WLAN est envoye dans la chaine "wireless"
+	IPT -t filter -N wireless
+	for ifwlan in ${IF_WLAN} ; do
+		IPT -t filter -A FORWARD -i ${ifwlan} -j wireless
+	done
+
+	# Rejeter adresses MAC en liste noire
+	IPT -t filter -A wireless -m mark --mark ${M6}/${M6} -j REJECT
+
+	# Accepter destinations en liste blanche (lanwhitelist + wanwhitelist)
+	IPT -t filter -A wireless -m mark --mark ${M2}/${M2} -j ACCEPT
+
+	# Rejeter acces non authentifie
+	IPT -t filter -A wireless -m mark ! --mark ${M1}/${M1} -j REJECT
+
+	# Accepter le trafic authentifie sans overquota
+	IPT -t filter -N counters
+	IPT -t filter -A wireless -m mark --mark ${M1} -j counters
+
+	# Rejeter acces en overquota
+	for i in 3 2 1 0 ; do
+		IPT -t filter -N overquota${i}
+	done
+	IPT -t filter -A wireless -m mark --mark ${MARK[3]}/${MARK[3]} -m mark ! --mark ${MARK[2]}/${MARK[2]} -m mark ! --mark ${MARK[1]}/${MARK[1]} -m mark ! --mark ${MARK[0]}/${MARK[0]} -j overquota3
+	IPT -t filter -A wireless -m mark --mark ${MARK[2]}/${MARK[2]} -m mark ! --mark ${MARK[1]}/${MARK[1]} -m mark ! --mark ${MARK[0]}/${MARK[0]} -j overquota2
+	IPT -t filter -A wireless -m mark --mark ${MARK[1]}/${MARK[1]} -m mark ! --mark ${MARK[0]}/${MARK[0]} -j overquota1
+	IPT -t filter -A wireless -m mark --mark ${MARK[0]}/${MARK[0]} -j overquota0
+
+	# Overquota CLASSE 3
+
+		# Accepter les reseaux internes
+		IPT -t filter -A overquota3 -m mark --mark ${M3}/${M3} -j counters
+
+		# Accpeter les reseaux partenaires
+		IPT -t filter -A overquota3 -m mark --mark ${M4}/${M4} -j counters
+
+		# Accepter le trafic heures creuses
+		IPT -t filter -A overquota3 -m mark --mark ${M5}/${M5} -j counters
+
+		# Rejeter le reste
+		IPT -t filter -A overquota3 -j REJECT
+
+	# Overquota CLASSE 2
+
+		# Accepter les reseaux internes
+		IPT -t filter -A overquota2 -m mark --mark ${M3}/${M3} -j counters
+
+		# Accepter les reseaux partenaires
+		IPT -t filter -A overquota2 -m mark --mark ${M4}/${M4} -j counters
+
+		# Rejeter le reste
+		IPT -t filter -A overquota2 -j REJECT
+
+	# Overquota CLASSE 1
+		
+		# Accepter les reseaux internes
+		IPT -t filter -A overquota1 -m mark --mark ${M3}/${M3} -j counters
+		
+		# Rejeter le reste
+		IPT -t filter -A overquota1 -j REJECT
+
+	# Overquota CLASSE 0
+
+		# Rejeter le reste
+		IPT -t filter -A overquota0 -j REJECT
+
+# FORWARD: compteurs des volumes de donnees echangees
+
+	IPT -A FORWARD -j counters
+
+	# Compteurs classe 0 => trafic interne
+	IPT -N CLASS0
+	
+	for dest in ${LAN_GREYLIST} ; do
+		IPT -A counters -s ${dest} -j CLASS0
+		IPT -A counters -d ${dest} -j CLASS0
+	done
+	IPT -N DL0
+	IPT -N UP0
+	for iflan in ${IF_LAN} ; do
+		for ifwlan in ${IF_WLAN} ; do
+			IPT -A CLASS0 -i ${IF_LAN} -o ${ifwlan} -j DL0
+			IPT -A CLASS0 -o ${IF_LAN} -i ${ifwlan} -j UP0
+		done
+	done
+
+	# Compteurs classe 1 => trafic partenaires
+	IPT -N CLASS1
+	
+	for dest in ${WAN_GREYLIST} ; do
+		IPT -A counters -s ${dest} -j CLASS1
+		IPT -A counters -d ${dest} -j CLASS1
+	done
+	IPT -N DL1
+	IPT -N UP1
+	for iflan in ${IF_LAN} ; do
+		for ifwlan in ${IF_WLAN} ; do
+			IPT -A CLASS1 -i ${IF_LAN} -o ${ifwlan} -j DL1
+			IPT -A CLASS1 -o ${IF_LAN} -i ${ifwlan} -j UP1
+		done
+	done
+
+	# Compteurs classe 2 => periodes creuses
+	IPT -N CLASS2
+	
+	# Periodes horaires
+	d="${OFFPEAK_HOURS},"
+	while [ "${d%%,*}" ] ; do
+
+		d0=${d%%,*} # extraire premiere periode
+
+		d1=${d0%-*} # heure debut
+		h=${d1%:*} ; h=${h#0}
+		m=${d1#*:} ; m=${m#0}
+		h=$(( ${h} + ${TIME_OFSET} ))
+		d1="${h}:${m}"
+
+		d2=${d0#*-} # heure fin
+		h=${d2%:*} ; h=${h#0}
+		m=${d2#*:} ; m=${m#0}
+		h=$(( ${h} + ${TIME_OFSET} ))
+		d2="${h}:${m}"
+
+		IPT -A counters -m time --timestart ${d1} --timestop ${d2} -j CLASS2
+
+		d=${d#*,} # decalage periode suivante
+
+	done
+	
+	# Jours semaine
+	IPT -A counters -m time --weekdays ${OFFPEAK_WEEKDAYS} -j CLASS2
+
+	# Jours feries fixes
+	d="${OFFPEAK_DAYS1},"
+	while [ "${d%%,*}" ] ; do
+
+		d0=${d%%,*} # extraire premiere periode
+
+		d2=$(date +%Y)
+		d1=(${d0//\// })
+		d1="${d1[1]}-${d1[0]}"
+
+		if [ "$(date +%m-%d)" \> "$d1" ] ; then
+			(( d2++ )) # incrementer annee si necessaire
+		fi
+
+		d1="${d2}-${d1}"
+
+		IPT -A counters -m time --datestart ${d1}T00:00:00 --datestop ${d1}T23:59:59 -j CLASS2
+
+		d=${d#*,} # decalage periode suivante
+
+	done
+
+	# Jours feries variables
+	d="${OFFPEAK_DAYS2},"
+	while [ "${d%%,*}" ] ; do
+
+		d0=${d%%,*} # extraire premiere periode
+
+		d1=(${d0//\// })
+		d1="${d1[2]}-${d1[1]}-${d1[0]}"
+
+		IPT -A counters -m time --datestart ${d1}T00:00:00 --datestop ${d1}T23:59:59 -j CLASS2
+
+		d=${d#*,} # decalage periode suivante
+
+	done
+
+
+	# Periodes conges
+	d="${OFFPEAK_PERIODS},"
+	while [ "${d%%,*}" ] ; do
+
+		d0=${d%%,*} # extraire premiere periode
+
+		d1=${d0%-*} ; d1=(${d1//\// })
+		d1="${d1[2]}-${d1[1]}-${d1[0]}"
+
+		d2=${d0#*-} ; d2=(${d2//\// })
+		d2="${d2[2]}-${d2[1]}-${d2[0]}"
+
+		IPT -A counters -m time --datestart ${d1}T00:00:00 --datestop ${d2}T23:59:59 -j CLASS2
+
+		d=${d#*,} # decalage periode suivante
+
+	done
+
+	IPT -N DL2
+	IPT -N UP2
+	for iflan in ${IF_LAN} ; do
+		for ifwlan in ${IF_WLAN} ; do
+			IPT -A CLASS2 -i ${IF_LAN} -o ${ifwlan} -j DL2
+			IPT -A CLASS2 -o ${IF_LAN} -i ${ifwlan} -j UP2
+		done
+	done
+
+	# Compteurs classe 3 => tout le reste
+	IPT -N CLASS3
+	IPT -A counters -j CLASS3
+	
+	IPT -N DL3
+	IPT -N UP3
+	for iflan in ${IF_LAN} ; do
+		for ifwlan in ${IF_WLAN} ; do
+			IPT -A CLASS3 -i ${IF_LAN} -o ${ifwlan} -j DL3
+			IPT -A CLASS3 -o ${IF_LAN} -i ${ifwlan} -j UP3
+		done
+	done
+
+# FILTER: acces au portail
+
+	# Trafic WLAN => portail
+	IPT -t filter -N prt
+	for iflwan in ${IF_WLAN} ; do
+		IPT -t filter -A INPUT -i ${iflwan} -j prt
+	done
+	# La chaine est remplie par la fonction "prtwhitelist load"
+
+	# Trafic LAN => portail
+	for iflan in ${IF_LAN} ; do
+		IPT -t filter -A INPUT -i ${iflan} -j ACCEPT
+	done
+
+}
+
+function rules_destroy { # Purger regles
+
+local table
+
+IPT -P INPUT ACCEPT
+IPT -P FORWARD ACCEPT
+IPT -P OUTPUT ACCEPT
+
+for table in mangle filter nat ; do
+	IPT -F -t ${table}
+	IPT -t ${table} -S |grep "^-N " |sed -e 's/^-N //g' |IPT -t ${table} -X
+done
+
+IPT -F INPUT
+IPT -F FORWARD
+IPT -F OUTPUT
+
+}
+
+########################################################################
+
+function prtwhitelist { # Services du portail en liste blanche
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:
+prtwhitelist load|flush|show
+
+Output:
+<proto/port>
+
+EOF
+return 0
+fi
+
+case $1 in
+
+	load)
+
+		local service proto port
+
+		# Purger la chaine
+		IPT -t filter -F prt
+
+		# Ajout des services en liste blanche
+		for service in ${PRT_WHITELIST} ; do
+			proto=$(get_proto ${service})
+			port=$(get_port ${service})
+			IPT -t filter -A prt -p ${proto} --dport ${port} -j ACCEPT
+		done
+
+	;;
+
+	flush)
+
+		IPT -t filter -F prt
+
+	;;
+
+	show)
+
+		IPT -t filter -S prt 2>/dev/null |grep "^-A prt " |sed -e "s/^-A prt -p //g ; s/ -m .* --dport /\//g ; s/ -j .*//g"
+	;;
+
+esac
+
+}
+
+function lanwhitelist { # Services LAN en liste blanche (sans quotas)
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:
+lanwhitelist load|flush|show
+
+Output:
+<ip>:<proto>/<port>
+
+EOF
+return 0
+fi
+
+case $1 in
+
+	load)
+
+		local service proto port addr
+
+		# Purger la chaine
+		IPT -t mangle -F lanwhitelist
+
+		# Ajout des services en liste blanche
+		for service in ${LAN_WHITELIST} ; do
+			proto=$(get_proto ${service})
+			port=$(get_port ${service})
+			addr=$(get_ip ${service})
+			case ${proto} in
+				any)
+					IPT -t mangle -A lanwhitelist -d ${addr} -j MARK --set-xmark ${M2}/${M2}
+				;;
+				tcp|udp)
+					IPT -t mangle -A lanwhitelist -p ${proto} --dport ${port} -d ${addr} -j MARK --set-xmark ${M2}/${M2}
+				;;
+			esac
+		done
+
+	;;
+
+	flush)
+
+		IPT -t mangle -F lanwhitelist
+
+	;;
+
+	show)
+
+		IPT -t mangle -S lanwhitelist 2>/dev/null|grep "^-A lanwhitelist "\
+		 |sed -e "s/^-A lanwhitelist -d //g ; s/\/32 /:/g ; s/:-p /:/g ; s/ -m .* --dport /\//g ; s/ -j .*//g ; s/ -j .*//g ; s/:-j MARK .*/:any/g"
+
+	;;
+
+esac
+
+}
+
+function wanwhitelist { # Services WAN en liste blanche (sans quotas)
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:
+wanwhitelist load|flush|show
+
+Output:
+<ip>
+
+EOF
+return 0
+fi
+
+case $1 in
+
+	load)
+
+		local addr service proto port addr
+
+		# Purger la chaine
+		IPT -t mangle -F wanwhitelist
+
+		# Installer les regles du fichier de configuration
+		for service in ${WAN_WHITELIST} ; do
+			proto=$(get_proto ${service})
+			port=$(get_port ${service})
+			addr=$(get_ip ${service})
+			case ${proto} in
+				any)
+					IPT -t mangle -A wanwhitelist -d ${addr} -j MARK --set-xmark ${M2}/${M2}
+				;;
+				tcp|udp)
+					IPT -t mangle -A wanwhitelist -p ${proto} --dport ${port} -d ${addr} -j MARK --set-xmark ${M2}/${M2}
+				;;
+			esac
+		done
+
+		# Telecharger la liste blanche
+		wget -T 5 -t 2 -O ${WAN_WHITELIST_FILE}.tmp ${WAN_WHITELIST_URL} 2>/dev/null >/dev/null
+		[ $? -eq 0 ] && mv ${WAN_WHITELIST_FILE}.tmp ${WAN_WHITELIST_FILE}
+
+		# Ajout des adresses en liste blanche (HTTP et HTTPS)
+		if [ -f ${WAN_WHITELIST_FILE} ] ; then
+			egrep -v "^($|#)" ${WAN_WHITELIST_FILE} | while read addr ; do
+				# IPT -t mangle -A wanwhitelist -p tcp --dport 443 -d ${addr} -j MARK --set-xmark ${M2}/${M2}
+                # Certaines IDP n'utilisent pas les ports standards !!!
+                # La Whitelist de Renater ne contient pas les numeros de ports
+                # => ouvrir tous les ports (:
+				IPT -t mangle -A wanwhitelist -p tcp -d ${addr} -j MARK --set-xmark ${M2}/${M2}
+			done
+		fi
+
+	;;
+	
+	flush)
+
+		IPT -t mangle -F wanwhitelist
+
+	;;
+
+	show)
+
+		IPT -t mangle -S wanwhitelist 2>/dev/null|grep "^-A wanwhitelist "\
+		 |sed -e "s/^-A wanwhitelist -d //g ; s/\/32 /:/g ; s/:-p /:/g ; s/ -m .* --dport /\//g ; s/ -j .*//g ; s/ -j .*//g ; s/:-j MARK .*/:any/g"
+
+	;;
+
+esac
+
+}
+
+function langreylist { # Services LAN en liste blanche (avec quotas)
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:
+langreylist load|flush|show
+
+Output:
+<cidr>
+
+EOF
+return 0
+fi
+
+case $1 in
+
+	load)
+
+		local addr
+
+		# Purger la chaine
+		IPT -t mangle -F langreylist
+
+		# Installer les regles du fichier de configuration
+		for addr in ${LAN_GREYLIST} ; do
+			IPT -t mangle -A langreylist -d ${addr} -j MARK --set-xmark ${M3}/${M3}
+		done
+
+	;;
+	
+	flush)
+
+		IPT -t mangle -F langreylist
+
+	;;
+
+	show)
+
+		IPT -t mangle -S langreylist 2>/dev/null |grep "^-A langreylist " |sed -e "s/^-A langreylist -d //g ; s/\/.*//g" |sort |uniq
+
+	;;
+
+esac
+
+}
+
+function wangreylist { # Services LAN en liste blanche (avec quotas)
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:
+wangreylist load|flush|show
+
+Output:
+<cidr>
+
+EOF
+return 0
+fi
+
+case $1 in
+
+	load)
+
+		local addr
+
+		# Purger la chaine
+		IPT -t mangle -F wangreylist
+
+		# Installer les regles du fichier de configuration
+		for addr in ${WAN_GREYLIST} ; do
+			IPT -t mangle -A wangreylist -d ${addr} -j MARK --set-xmark ${M4}/${M4}
+		done
+
+	;;
+	
+	flush)
+
+		IPT -t mangle -F wangreylist
+
+	;;
+
+	show)
+
+		IPT -t mangle -S wangreylist 2>/dev/null |grep "^-A wangreylist " |sed -e "s/^-A wangreylist -d //g ; s/\/.*//g" |sort |uniq
+
+	;;
+
+esac
+
+}
+
+function macblacklist { # Liste noire addresses MAC
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:
+macblacklist add|del <MAC>
+             load|flush
+             show [-c|-k] (default is '-c')
+             -c => from config
+             -k => from kernel
+
+Output:
+-k : <mac>
+-c : <mac> (L|G)
+     L = local list
+     G = global list
+
+EOF
+return 0
+fi
+
+case $1 in
+
+	add|del)
+
+		local list
+		if [ -z ${SLAVES} ] ; then
+			list="${CONF}/macblacklist_${HOSTNAME}.conf"
+		else
+			list="${CONF}/macblacklist.conf"
+		fi
+
+	;;
+
+esac
+
+case $1 in
+
+	add) # ajouter adresse MAC en liste noire (configuration + noyau)
+
+		echo "${2}" >> ${list}
+		[ -z ${MGMT_ONLY} ] && macblacklist load
+
+	;;
+
+	del) # supprimer adresse MAC de la liste noire (configuration + noyau)
+
+		sed -i "/^${2}$/d" ${list}
+		[ -z ${MGMT_ONLY} ] && macblacklist load
+
+	;;
+
+	load) # (re)charger liste noire (noyau)
+
+		local mac
+
+		# recuperer la liste des adresses MAC a bloquer (globale)
+		[ -f ${CONF}/macblacklist.conf ] && egrep -v "^#|^$" ${CONF}/macblacklist.conf > /tmp/macblacklist
+
+		# recuperer la liste des adresses MAC a bloquer (locale)
+		[ -f ${CONF}/macblacklist_${HOSTNAME}.conf ] && egrep -v "^#|^$" ${CONF}/macblacklist_${HOSTNAME}.conf >> /tmp/macblacklist
+
+		touch /tmp/macblacklist
+		sort < /tmp/macblacklist > /tmp/macblacklist.conf
+
+		# recuperer et trier la liste des adresses MAC bloquees par Netfilter
+		iptables -t mangle -S macblacklist 2>/dev/null\
+		 |grep "^-A macblacklist "\
+		 |sed -e "s/.* --mac-source //g ; s/ .*$//g"\
+		 |sort > /tmp/macblacklist.current
+
+		# comparer les deux fichiers, ajouter et supprimer les regles Netfilter
+		diff -i /tmp/macblacklist.current /tmp/macblacklist.conf\
+		 |egrep "^(<|>) "\
+		 | while read mac ; do
+			mac=(${mac})
+			case ${mac[0]} in
+				\>)
+					IPT -t mangle -A macblacklist -m mac --mac-source ${mac[1]} -j MARK --set-xmark ${M6}/${M6}
+				;;
+				\<)
+					IPT -t mangle -D macblacklist -m mac --mac-source ${mac[1]} -j MARK --set-xmark ${M6}/${M6}
+				;;
+			esac
+		done
+	;;
+	
+	flush) # vider liste noire (noyau)
+
+		IPT -t mangle -F macblacklist
+
+	;;
+
+	show) # afficher liste noire
+
+		case $2 in
+
+			-k) # noyau
+
+				IPT -t mangle -S macblacklist 2>/dev/null|grep "^-A macblacklist " |sed -e "s/^.*--mac-source //g ; s/ -j.*//g" |tr [:upper:] [:lower:]
+
+			;;
+			-c|*) # configuration
+
+				{ [ -f ${CONF}/macblacklist.conf ] && egrep -v "^($|#)" ${CONF}/macblacklist.conf |awk '{print $1" (G)"}' ;\
+				  [ -f ${CONF}/macblacklist_${HOSTNAME}.conf ] && egrep -v "^($|#)" ${CONF}/macblacklist_${HOSTNAME}.conf |awk '{print $1" (L)"}' ; }\
+				  |sort
+
+			;;
+
+		esac
+
+	;;
+
+esac
+
+}
+
+function userblacklist { # Liste noire identifiants
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:
+userblacklist add|del <USER>
+              show
+
+Output:
+<user> (L|G)
+L = local list
+G = global list
+
+EOF
+fi
+
+case $1 in
+
+	add|del)
+
+		local list
+		if [ -z ${SLAVES} ] ; then
+			list="${CONF}/userblacklist_${HOSTNAME}.conf"
+		else
+			list="${CONF}/userblacklist.conf"
+		fi
+
+	;;
+
+esac
+
+case $1 in
+
+	add)
+
+		echo "${2}" >> ${list}
+		[ -z ${MGMT_ONLY} ] && kick ${2}
+
+	;;
+
+	del)
+
+		sed -i "/^${2}$/d" ${list}
+
+	;;
+
+	show)
+
+		{ [ -f ${CONF}/userblacklist.conf ] && egrep -v "^($|#)" ${CONF}/userblacklist.conf |awk '{print $1" (G)"}' ;\
+		  [ -f ${CONF}/userblacklist_${HOSTNAME}.conf ] && egrep -v "^($|#)" ${CONF}/userblacklist_${HOSTNAME}.conf |awk '{print $1" (L)"}' ; }\
+		  |sort
+
+	;;
+
+esac
+
+}
+
+function offpeak { # Periodes creuses
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:
+offpeak load|flush|show
+
+Output:
+<time>
+
+EOF
+return 0
+fi
+
+case $1 in
+
+	load)
+
+		local d d0 d1 d2
+		IPT -t mangle -F offpeak
+
+		# Heures creuses
+		d="${OFFPEAK_HOURS},"
+		while [ "${d%%,*}" ] ; do
+			d0=${d%%,*}
+			d=${d#*,}
+			IPT -t mangle -A offpeak -m time --timestart ${d0%-*} --timestop ${d0#*-} -j MARK --set-xmark ${M5}/${M5}
+		done
+
+		# Weekends
+		IPT -t mangle -A offpeak -m time --weekdays ${OFFPEAK_WEEKDAYS} -j MARK --set-xmark ${M5}/${M5}
+
+		# Jours feries
+		d="${OFFPEAK_DAYS},"
+		d2=$(date +%Y)
+		while [ "${d%%,*}" ] ; do 
+			d0=${d%%,*}
+			d1=(${d0//\// })
+			d1="${d2}-${d1[1]}-${d1[0]}"
+			d=${d#*,}
+			IPT -t mangle -A offpeak -m time --datestart ${d1}T00:00:00 --datestop ${d1}T23:59:59 -j MARK --set-xmark ${M5}/${M5}
+		done
+
+		# Conges
+		d="${OFFPEAK_PERIODS},"
+		while [ "${d%%,*}" ] ; do
+			d0=${d%%,*}
+			d1=${d0%-*} ; d1=(${d1//\// })
+			d2=${d0#*-} ; d2=(${d2//\// })
+			d1="${d1[2]}-${d1[1]}-${d1[0]}"
+			d2="${d2[2]}-${d2[1]}-${d2[0]}"
+			d=${d#*,}
+			IPT -t mangle -A offpeak -m time --datestart ${d1}T00:00:00 --datestop ${d2}T23:59:59 -j MARK --set-xmark ${M5}/${M5}
+		done
+		
+	;;
+
+	flush)
+
+		IPT -t mangle -F offpeak
+
+	;;
+
+	show)
+
+		IPT -t mangle -S offpeak 2>/dev/null |grep "^-A wangreylist " |sed -e "s/^-A offpeak -d //g ; s/\/.*//g" |sort |uniq
+
+	;;
+
+esac
+
+}
+
+########################################################################
+
+function leases { # Afficher les baux DHCP actifs
+
+${USPOT}/leases.pl |sort |uniq
+
+}
+
+function sessions { # Afficher les sessions actives
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:
+sessions [-c|-k] (default is '-c')
+         -c => from cache
+         -k => from kernel
+
+Output:
+-k : <mac> <ip>
+-c : <mac> <ip> <user> <start epoch> <session duration>
+
+EOF
+return 0
+fi
+
+case $1 in
+
+	-k) # noyau
+
+		IPT -t mangle -S authenticated 2>/dev/null\
+		 |tail -n +2\
+		 |sed -e 's/^.* authenticated -s //g ; s/\/32 -m mac --mac-source / /g ; s/ -j ACCEPT$//g'\
+		 |awk '{print $2" "$1}'\
+		 |awk '{print tolower($0)}'
+
+	;;
+	
+	-c|*) # cache
+
+		local access_data
+		cat ${SESSIONS}/* 2>/dev/null\
+		 |sort -t, -k5\
+		 |while read access_data ; do
+			echo "${access_data},$(( ${EPOCH} - ${access_data##*,} ))"
+		  done |sed -e "s/,/ /g" 
+
+	;;
+
+esac |sort
+
+}
+
+function stats { # Afficher les stats des sessions actives
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:
+stats
+
+Output:
+<mac> <ip> <user> <start epoch> <session duration> <DL0> <UP0> <DL2> <UP2> <DL3> <UP3>
+
+EOF
+return 0
+fi
+
+local access_data ip data_dl[0] data_up[0] data_dl[1] data_up[1] data_dl[2] data_up[2] data_dl[3] data_up[3]
+
+cat ${SESSIONS}/* 2>/dev/null\
+ |sort\
+ |while read access_data ; do
+
+	ip=${access_data#*,} ; ip=${ip%%,*}
+
+	data_dl[0]="$(IPT -nvxL DL0 2>/dev/null |awk '$1 ~ /^[0-9]+$/ { print $9","$2 }' |grep "^${ip},")"
+	data_up[0]="$(IPT -nvxL UP0 2>/dev/null |awk '$1 ~ /^[0-9]+$/ { print $8","$2 }' |grep "^${ip},")"	
+
+	data_dl[1]="$(IPT -nvxL DL1 2>/dev/null |awk '$1 ~ /^[0-9]+$/ { print $9","$2 }' |grep "^${ip},")"
+	data_up[1]="$(IPT -nvxL UP1 2>/dev/null |awk '$1 ~ /^[0-9]+$/ { print $8","$2 }' |grep "^${ip},")"	
+
+	data_dl[2]="$(IPT -nvxL DL2 2>/dev/null |awk '$1 ~ /^[0-9]+$/ { print $9","$2 }' |grep "^${ip},")"
+	data_up[2]="$(IPT -nvxL UP2 2>/dev/null |awk '$1 ~ /^[0-9]+$/ { print $8","$2 }' |grep "^${ip},")"	
+
+	data_dl[3]="$(IPT -nvxL DL3 2>/dev/null |awk '$1 ~ /^[0-9]+$/ { print $9","$2 }' |grep "^${ip},")"
+	data_up[3]="$(IPT -nvxL UP3 2>/dev/null |awk '$1 ~ /^[0-9]+$/ { print $8","$2 }' |grep "^${ip},")"	
+
+	data_dl[0]=${data_dl[0]:-0}
+	data_up[0]=${data_up[0]:-0}
+
+	data_dl[2]=${data_dl[2]:-0}
+	data_up[2]=${data_up[2]:-0}
+
+	data_dl[3]=${data_dl[3]:-0}
+	data_up[3]=${data_up[3]:-0}
+
+	echo "${access_data},$(( ${EPOCH} - ${access_data##*,} )),${data_dl[0]#*,},${data_up[0]#*,},${data_dl[1]#*,},${data_up[1]#*,},${data_dl[2]#*,},${data_up[2]#*,},${data_dl[3]#*,},${data_up[3]#*,}"
+
+ done |sed -e "s/,/ /g"
+
+}
+
+function kick { # Couper session(s) d'un utilisateur
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:
+kick <user>
+
+EOF
+return 0
+fi
+
+local active_session actives_sessions
+
+actives_sessions=$(egrep -h ".*,${1},[0-9]+" ${SESSIONS}/* 2>/dev/null |cut -d, -f-2)
+
+for active_session in ${actives_sessions} ; do
+	uSpot revoke ${active_session}
+done
+
+}
+
+########################################################################
+
+function IPT { # Appel Netfilter
+
+[ "${DEBUG}" = "1" ] && echo "$IPTABLES $@" 2>&1
+$IPTABLES "$@"
+
+}
+
+function MYSQL { # Acces base MySQL
+
+mysql ${1} --host="${MYSQL_HOST}" --user="${MYSQL_USER}" --password="${MYSQL_PASSWD}" --database="${MYSQL_DB}" 2>/dev/null
+
+}
+
+function MYSQLGET { # Acces base MySQL et formatage resultats pour 'eval' (RAZ des variables NULL)
+
+MYSQL --vertical \
+ |sed -e '/^$/d ; /^\*/d ;
+  s/^[[:space:]]*//g ;
+  s/\([a-z]*\)_\([a-z]*\)_\([a-z]*\)\([0-9]*\): /\1_\2_\3\[\4\]=/g ;
+  s/\([A-Z]*\)_\([A-Z]*\)_\([A-Z]*\)\([0-9]*\): /\1_\2_\3\[\4\]=/g ;
+  s/: /=/g ;
+  s/\(.*\)=NULL/unset \1/g'
+
+}
+
+function log { # Appel Syslog
+
+logger -p ${FACILITY} -t uSpot "${@}"
+
+}
+
+function createpasswd { # Generer un mot de passe alleatoire
+
+local i p c l mdp
+
+for ((i=1; i <= ${PASSWD_LEN} ; i++)) ; do
+	l=${#PASSWD_CHR} # longueur de la chaine des caracteres autorises
+	p=$(( $RANDOM%${l} )) # generer une position aleatoire
+	c=${PASSWD_CHR:${p}:1} # extraire un caractere
+	mdp="${mdp}${c}" # concatenation mot de passe
+done
+
+echo ${mdp}
+
+}
+
+function cryptpasswd { # Chiffrer un mot de passe
+
+case ${PASSWD_CRYPT_METHOD} in
+	sha1sum)
+		echo -n $(echo -n "${1}" |sha1sum |awk '{print $1}')
+	;;
+	htpasswd)
+		echo -n $(htpasswd -bsn null ${1} |cut -d: -f2)
+	;;
+	*)
+		echo -n "${1}"
+	;;
+esac
+
+}
+
+########################################################################
+
+function mac_rewrite { # Format attendu => adresse MAC
+
+# Les adresses MAC retournees par DHCPD sont converties:
+# "0x:aa:0y:bb:cc:0z" => "x:aa:y:bb:cc:z"
+# La fonction re-ecrit les adresses au format 0x:aa:0y:bb:cc:0z"
+
+local mac=${1//:/ }
+local i
+local o
+
+# Convertir la chaine en tableau
+mac=($mac)
+
+# Ajouter un zero non significatif si necessaire
+for (( i=0 ; i <=5 ; i++ )) ; do
+        o=${mac[${i}]}
+        [ ${#o} -eq 1 ] && mac[${i}]="0${o}"
+done
+
+# Convertir le tableau en chaine et afficher au format MAC
+mac=${mac[*]}
+echo ${mac// /:}
+
+}
+
+function get_ip { # Format attendu => ip[:proto/port]
+
+local v=${1}
+echo ${v%:*}
+
+}
+
+function get_proto { # Format attendu => [ip:]proto[/port]
+
+local v=${1#*:}
+echo ${v%/*}
+
+}
+
+function get_port { # Format attendu => [ip:proto/]port
+
+local v=${1#*:}
+echo ${v#*/}
+
+}
+
+function get_ldap_mail { # Format attentu => uid
+
+ldapsearch ${LDAP_OPTS} -h ${LDAP_HOST} uid=${1} mail |grep ^mail |awk '{print $2}'
+
+}
+
+function get_wlan_id { # Format attendu => ip, retour: id du reseau
+
+local ip=${1}
+local i1 i2 i3 i4
+local n1 n2 n3 n4
+local m1 m2 m3 m4
+local im nm i id
+
+# extraire les octets de l'adresse IP
+IFS=. read -r i1 i2 i3 i4 <<< "${ip}"
+
+while [ "${WLAN_ADDR[$i]}" != "" ] ; do # tester chaque reseau
+
+	# extraire les octets de l'adresse reseau
+	IFS=. read -r n1 n2 n3 n4 <<< "${WLAN_ADDR[$i]}"
+
+	# extraire les octets du masque reseau
+	IFS=. read -r m1 m2 m3 m4 <<< "${WLAN_MASK[$i]}"
+
+	# calcul IP / masque
+	im=$(printf "%d.%d.%d.%d\n" "$(($i1 & $m1))" "$(($i2 & $m2))" "$(($i3 & $m3))" "$(($i4 & $m4))")
+
+	# calcul reseau / masque
+	nm=$(printf "%d.%d.%d.%d\n" "$(($n1 & $m1))" "$(($n2 & $m2))" "$(($n3 & $m3))" "$(($n4 & $m4))")
+
+	if [ "${im}" = "${nm}" ] ; then # IP = reseau
+		id="${WLAN_ID[$i]}"
+		break
+	fi
+
+	# passer au reseau suivant
+	(( i++ ))
+
+done
+
+echo "${id:-unknown}"
+
+}
+
+function configure_munin_if {
+
+rm /etc/munin/plugins/if_* 2>/dev/null
+
+for i in $(/usr/share/munin/plugins/if_ suggest 2>/dev/null) ; do
+	ln -s /usr/share/munin/plugins/if_ /etc/munin/plugins/if_${i}
+done
+
+service munin-node restart >/dev/null
+
+}
+
+########################################################################
+
+setvars

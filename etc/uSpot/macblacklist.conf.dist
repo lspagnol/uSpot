@@ -1,0 +1,8 @@
+# Liste noire adresses MAC (globale)
+# Ces interfaces sont systématiquement bloquees par Netfilter: 
+# => redirection vers page info sans passer par l'authentification.
+# La liste peut etre surchargee localement via:
+# '/etc/uSpot/macblacklist_HOSTNAME.conf'
+
+# 10:0b:a9:8e:75:18
+# 10:0b:a9:8e:70:01

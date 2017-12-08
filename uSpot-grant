@@ -1,0 +1,138 @@
+#!/bin/bash
+# uSpot-grant
+# Mise en place de l'autorisation d'acces par le serveur Web
+
+########################################################################
+
+. /usr/local/uSpot/uSpot-functions
+
+########################################################################
+# Aide
+
+if [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage: uSpot-grant [-html] <ip> <mac> [<user>]
+EOF
+fi
+
+########################################################################
+
+# Mode HTML ?
+if [ "${1}" = "-html" ] ; then
+	HTML=1
+	shift
+fi
+
+# Fin si le nombre minimal d'arguments n'est pas respecte
+[ -z ${2} ] && exit 1
+
+########################################################################
+
+mac=$(mac_rewrite ${1})
+ip=${2}
+wlan_id=$(get_wlan_id ${2})
+login=${3:-unknown}
+
+# Filtrage identification Shibboleth
+if [ "${login}" != "${login//\!/}" ] ; then
+	idp=${login%%\!*} ; idp=${idp##*:} ; idp=${idp##*//} ; idp=${idp%%/*} ; hash=${login##*\!}
+	hash=${login##*\!}
+	login="${idp}:${hash}"
+elif [ "${login}" != "${login//:/}" ] ; then
+	idp=${login%:*} ; idp=${idp##*:}
+	hash=${login##*:}
+	login="${idp}:${hash}"
+fi
+
+########################################################################
+
+grant=${EPOCH}
+access_data="${mac},${ip},${login},${grant}"
+session_file="${SESSIONS}/${mac} ${ip}"
+redirect_file="${REDIRECTS}/${mac} ${ip}"
+revoke_file="${REVOKES}/${mac} ${ip}"
+[ -f "${redirect_file}" ] && redirect_data="$( < "${redirect_file}" )"
+redirect_data=${redirect_data:-unkown}
+redirect=${redirect_data%%/*}
+
+########################################################################
+
+# Suppression du cache de redirection
+[ -f "${redirect_file}" ] && rm "${redirect_file}"
+
+# La regle existe deja => fin
+#IPT -t mangle -C authenticated -m mac --mac-source ${mac} -s ${ip} -j MARK --set-xmark ${M1}/${M1} 2>/dev/null && exit 0
+IPT -t mangle -C authenticated -m mac --mac-source ${mac} -j MARK --set-xmark ${M1}/${M1} 2>/dev/null && exit 0
+
+########################################################################
+
+# Variables disponibles pour les plugins:
+
+# ip, mac, user, wlan_id
+# grant => epoch debut de session
+# access_data => concatenation des informations de session (mac,ip,user,grant)
+# redirect_data => URL de redirection avant filtrage
+# redirect => URL de redirection apres filtrage
+# session_file => URI des informations de session
+# redirect_file => URI des informations de redirection
+# quota_search => date debut recherche quotas
+
+########################################################################
+
+for plugin in ${PRE_GRANT} ; do
+	[ -f ${USPOT}/plugins/${plugin} ] && . ${USPOT}/plugins/${plugin}
+	# Connection rejetee par un plugin
+	if [ $? -ne 0 ] ; then
+		log "ACCESS DENIED: ${mac},${ip},${login},${plugin}"
+		exit 1
+	fi
+done
+
+########################################################################
+
+# Mise en place de la regle d'acces
+#IPT -t mangle -A authenticated -m mac --mac-source ${mac} -s ${ip} -j MARK --set-xmark ${M1}/${M1} 2>/dev/null
+IPT -t mangle -A authenticated -m mac --mac-source ${mac} -j MARK --set-xmark ${M1}/${M1} 2>/dev/null
+
+if [ $? -ne 0 ] ; then # Rejet si la mise en place de la regle a echoue
+	log "ACCESS ERROR: ${access_data}"
+	[ -z ${HTML} ] || echo -n "Arguments invalides"
+	exit 1
+fi
+
+# Mise en place du cache de session
+[ -d ${SESSIONS} ] && echo "${access_data}" > "${session_file}"
+
+# Revocation automatique (demon ATD)
+if [ -d ${REVOKES} ] ; then
+	if [ ${max_time} -ne 0 ] ; then # Duree totale de connexion specifiee
+		if [ $(( ${total_time} + ${max_duration} )) -gt ${max_time} ] ; then
+			revoke_time=$(( ${max_time} - ${total_time} ))
+		else
+			[ ${max_duration} -ne 0 ] && revoke_time=${max_duration}
+		fi
+	else
+		[ ${max_duration} -ne 0 ] && revoke_time=${max_duration}
+	fi
+	if [ ! -z ${revoke_time} ] ; then
+		revoke_time=$(( ${revoke_time} / 60 ))
+		# Planification de la revocation
+		revoke_id=$(echo "${USPOT}/uSpot-revoke ${mac} ${ip}" |at -M now + ${revoke_time} min 2>&1 |grep "^job " |awk '{print $2}')
+		# Inscription du numero de job en cache
+		echo "${revoke_id}" > "${revoke_file}"
+	fi
+fi
+
+log "ACCESS GRANTED: ${access_data}"
+log "WLAN_ID: ${access_data},${wlan_id}"
+log "REDIRECT: ${access_data},${redirect}"
+
+########################################################################
+
+for plugin in ${POST_GRANT} ; do
+	[ -f ${USPOT}/plugins/${plugin} ] && . ${USPOT}/plugins/${plugin}
+done
+
+########################################################################
+
+exit 0

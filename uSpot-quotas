@@ -1,0 +1,137 @@
+#!/bin/bash
+# uSpot-quotas
+# Gestion des comptes invites
+
+########################################################################
+
+. /usr/local/uSpot/uSpot-functions
+
+########################################################################
+# Aide
+
+if [ -z ${1} ] || [ "${1}" = "-h" ] ; then
+cat<<EOF
+Usage:   uSpot-quotas <action> <login> [<quota>] [<value>]
+
+Actions: set <quota> <value>
+         unset <quota>
+         del
+         show
+
+Quotas:  sessions <number>
+         duration <seconds>
+         time <seconds>
+         class0|class1|class2|class3 <${DEFAULT_UNIT}>
+
+Output:  <quota> <current (${DEFAULT_UNIT})> <max (${DEFAULT_UNIT})>
+
+EOF
+exit 0
+fi
+
+########################################################################
+
+case $1 in
+	set|unset|del|show)
+		cmd=${1}
+		shift
+	;;
+	*) { echo "ERROR: <action> is required" ; exit 1 ; }
+esac
+
+login=${1}
+shift
+
+case ${cmd} in
+	set|unset)
+		[ -z ${1} ] && { echo "ERROR: <quota> is required" ; exit 1 ; }
+		quota=${1}
+		case ${quota} in
+			class0) _quota="quota_bytes_class0";;
+			class1) _quota="quota_bytes_class1";;
+			class2) _quota="quota_bytes_class2";;
+			class3) _quota="quota_bytes_class3";;
+			sessions) _quota="quota_sessions";;
+			duration) _quota="quota_duration";;
+			time) _quota="quota_time";;
+			*) { echo "ERROR: '${quota}' does not exists" ; exit 1 ; }
+		esac
+		shift
+	;;
+esac
+
+case ${cmd} in
+
+	set)
+		[ -z ${1} ] && { echo "ERROR: <value> is required" ; exit 1 ; }
+		case ${quota} in
+			sessions|duration|time) value=${1};;
+			*) value=$(( ${1} * ${DEFAULT_DIV} ));;
+		esac
+		req="
+		SELECT
+		  quota_login
+		 FROM quotas
+		 WHERE
+		  quota_login='${login}'
+		;"
+		if [ "$(echo "$req" |MYSQL)" ] ; then
+			req="
+			UPDATE quotas
+			SET
+			 ${_quota}='${value}'
+			WHERE
+			 quota_login='${login}'
+			;"
+			echo "${req}" |MYSQL
+		else
+			req="
+			INSERT INTO quotas
+			 (quota_login,${_quota})
+			VALUES
+			 ('${login}','${value}')
+			;"
+			echo "${req}" |MYSQL
+		fi
+	;;
+
+	unset)
+		req="
+		UPDATE quotas
+		SET
+		 ${_quota}=NULL
+		WHERE
+		 quota_login='${login}'
+		;"
+		echo "${req}" |MYSQL
+	;;
+
+	del)
+		req="
+		DELETE from quotas
+		WHERE
+		 quota_login='${login}'
+		;"
+		echo "${req}" |MYSQL
+	;;
+
+	show)
+
+		# Recuperer les infos dans la base SQL et corriger les valeurs si necessaire
+		for plugin in mysql/params_get.sh mysql/quotas_get.sh mysql/stats_get.sh session/stats_fix.sh session/quotas_fix.sh ; do
+			. ${USPOT}/plugins/${plugin}
+		done
+
+		echo "sessions ${sessions} ${max_sessions}"
+		echo "duration ${duration} ${max_duration}"
+		echo "time ${total_time} ${max_time}"
+
+		for i in 0 1 2 3 ; do
+			max_bytes_class[${i}]=$(( ${max_bytes_class[${i}]} / ${DEFAULT_DIV} ))
+			total_bytes_class[${i}]=$(( ${total_bytes_class[${i}]} / ${DEFAULT_DIV} ))
+			echo "class${i} ${total_bytes_class[${i}]} ${max_bytes_class[${i}]}"
+		done
+
+	;;
+
+esac
