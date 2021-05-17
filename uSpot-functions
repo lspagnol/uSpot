@@ -1217,7 +1217,7 @@ case $1 in
 		 #|awk '{print $2" "$1}'\
 		 #|awk '{print tolower($0)}'
 
-		iptables -t mangle -S authenticated 2>/dev/null\
+		IPT -t mangle -S authenticated 2>/dev/null\
 		 |tail -n +2\
 		 |sed 's/^.* --mac-source //g ; s/ .*//g'\
 		 |awk '{print tolower($0)}'
