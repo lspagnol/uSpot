@@ -17,7 +17,7 @@ BIN="/usr/local/uSpot"
 PKGS="\
  bash bash-completion joe sipcalc\
  curl wget rsync logtail\
- vlan isc-dhcp-server arping fping\
+ vlan isc-dhcp-server arping fping ifupdown\
  munin-node ntp task-spooler\
  apache2 apache2-utils mysql-client\
  libapache2-mod-php5 php5 php5-mysql\

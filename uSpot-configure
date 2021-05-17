@@ -6,7 +6,8 @@
 
 ########################################################################
 
-ifaces=$(for a in $(netstat -npl |egrep '^udp .*/ntpd' |egrep -v " (127.0.0.1|0.0.0.0|${PORTAL}):123 " |awk '{print $4}' |cut -d: -f1) ; do ifconfig |grep -B1 " inet addr:${a} " |head -1 ; done |awk '{print $1}')
+#ifaces=$(for a in $(netstat -npl |egrep '^udp .*/ntpd' |egrep -v " (127.0.0.1|0.0.0.0|${PORTAL}):123 " |awk '{print $4}' |cut -d: -f1) ; do ifconfig |grep -B1 " inet addr:${a} " |head -1 ; done |awk '{print $1}')
+ifaces=$(ip addr ls |grep "inet " |egrep -v " (127.0.0.1|0.0.0.0|${PORTAL})/" |grep " scope global " |sed 's/^.* scope global //g')
 
 echo "Shutting down services ..."
 for service in uSpot apache2 ntp isc-dhcp-server ; do
