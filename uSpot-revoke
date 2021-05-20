@@ -44,7 +44,7 @@ redirect_file="${REDIRECTS}/${mac} ${ip}"
 revoke_file="${REVOKES}/${mac} ${ip}"
 [ -f "${revoke_file}" ] && revoke_id="$( < "${revoke_file}" )"
 
-redirect_data=${redirect_data:-unkown}
+redirect_data=${redirect_data:-unknown}
 redirect=${redirect_data%%/*}
 access_data=$( < "${session_file}" )
 access_data=( ${access_data//,/ } )

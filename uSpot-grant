@@ -52,7 +52,7 @@ session_file="${SESSIONS}/${mac} ${ip}"
 redirect_file="${REDIRECTS}/${mac} ${ip}"
 revoke_file="${REVOKES}/${mac} ${ip}"
 [ -f "${redirect_file}" ] && redirect_data="$( < "${redirect_file}" )"
-redirect_data=${redirect_data:-unkown}
+redirect_data=${redirect_data:-unknown}
 redirect=${redirect_data%%/*}
 
 ########################################################################
