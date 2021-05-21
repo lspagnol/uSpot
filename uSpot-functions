@@ -989,6 +989,11 @@ case $1 in
 
 		local mac
 
+		# correctif d'Emmanuel 
+		# on supprime le fichier temporaire pour eviter la concatenation
+		# de macblacklist_${HOSTNAME}.conf si macblacklist.conf n'existe pas
+		[ -f /tmp/macblacklist ] && rm /tmp/macblacklist
+
 		# recuperer la liste des adresses MAC a bloquer (globale)
 		[ -f ${CONF}/macblacklist.conf ] && egrep -v "^#|^$" ${CONF}/macblacklist.conf > /tmp/macblacklist
 
